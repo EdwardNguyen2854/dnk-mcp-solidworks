@@ -18,8 +18,9 @@ DOMAINS = {
     "listings, What's Wrong",
     "export": "STEP, IGES, STL, 3MF, Parasolid, PDF, DXF, DWG; screenshots",
     "transactions": "file checkpoints and rollback",
-    "assemblies": "planned: components, mates, interference",
-    "drawings": "planned: sheets, views, dimensions, PDF/DXF",
+    "assemblies": "components, origin placement, planar-face mates, "
+    "interference detection, bounding box",
+    "drawings": "drawing from model, standard views, view listing, PDF export",
 }
 
 

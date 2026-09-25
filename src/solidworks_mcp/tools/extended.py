@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from .. import registry
 from ..com.worker import run
-from ..domain import features, inspect, sketch
+from ..domain import assemblies, drawings, features, inspect, sketch
 from ..errors import ok
 from ..registry import array, boolean, integer, number, obj, string
 from ..tx import checkpoint
 from .core import envelope
+
+MATE_TYPES = ["coincident", "concentric", "perpendicular", "parallel",
+              "tangent", "distance", "angle"]
+DIRECTIONS = ["+x", "-x", "+y", "-y", "+z", "-z"]
 
 
 @registry.tool(
@@ -332,3 +336,239 @@ def rollback_to_checkpoint(args: dict) -> dict:
     return ok(
         run(lambda: checkpoint.rollback(args.get("checkpoint")))
     )
+
+
+@registry.tool(
+    "insert_component",
+    "Insert a part or assembly into the active assembly. The first component "
+    "is usually fixed; later ones should be movable so mates can solve.",
+    obj(
+        {
+            "path": string("path to the .sldprt/.sldasm file"),
+            "x_mm": number("placement x (mm)", default=0),
+            "y_mm": number("placement y (mm)", default=0),
+            "z_mm": number("placement z (mm)", default=0),
+            "fixed": boolean("fix the component in place", default=False),
+        },
+        required=("path",),
+    ),
+    tier="extended",
+    tags=("assemblies",),
+)
+def insert_component(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: assemblies.insert_component(
+                args["path"],
+                args.get("x_mm", 0),
+                args.get("y_mm", 0),
+                args.get("z_mm", 0),
+                args.get("fixed", False),
+            )
+        )
+    )
+
+
+@registry.tool(
+    "list_components",
+    "Names, paths, fixed state, positions and boxes of assembly components.",
+    obj({}),
+    tier="extended",
+    tags=("assemblies",),
+)
+def list_components(args: dict) -> dict:
+    def job() -> dict:
+        components = assemblies.list_components()
+        return {"components": components, "count": len(components)}
+
+    return ok(run(job))
+
+
+@registry.tool(
+    "set_component_transform",
+    "Move and rotate a component; the resulting placement is read back.",
+    obj(
+        {
+            "name": string("component name from list_components"),
+            "x_mm": number("x (mm)", default=0),
+            "y_mm": number("y (mm)", default=0),
+            "z_mm": number("z (mm)", default=0),
+            "rx_deg": number("rotation about x (deg)", default=0),
+            "ry_deg": number("rotation about y (deg)", default=0),
+            "rz_deg": number("rotation about z (deg)", default=0),
+        },
+        required=("name",),
+    ),
+    tier="extended",
+    tags=("assemblies",),
+)
+def set_component_transform(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: assemblies.set_component_transform(
+                args["name"],
+                args.get("x_mm", 0),
+                args.get("y_mm", 0),
+                args.get("z_mm", 0),
+                args.get("rx_deg", 0),
+                args.get("ry_deg", 0),
+                args.get("rz_deg", 0),
+            )
+        )
+    )
+
+
+@registry.tool(
+    "add_mate",
+    "Mate two planar faces, named by component and outward direction in the "
+    "component's own frame (e.g. '+x', '-z'). Distance is required for the "
+    "distance mate type.",
+    obj(
+        {
+            "mate_type": string("mate type", enum=MATE_TYPES),
+            "component_a": string("first component name"),
+            "direction_a": string("first face direction", enum=DIRECTIONS),
+            "component_b": string("second component name"),
+            "direction_b": string("second face direction", enum=DIRECTIONS),
+            "distance_mm": number("distance for distance mates (mm)", default=None),
+            "align": string(
+                "alignment", enum=["aligned", "anti_aligned", "closest"],
+                default="closest",
+            ),
+            "flip": boolean("flip the mate alignment", default=False),
+        },
+        required=(
+            "mate_type", "component_a", "direction_a", "component_b", "direction_b",
+        ),
+    ),
+    tier="extended",
+    tags=("assemblies",),
+)
+def add_mate(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: assemblies.add_mate(
+                args["mate_type"],
+                args["component_a"],
+                args["direction_a"],
+                args["component_b"],
+                args["direction_b"],
+                args.get("distance_mm"),
+                args.get("align", "closest"),
+                args.get("flip", False),
+            )
+        )
+    )
+
+
+@registry.tool(
+    "check_interference",
+    "Report component pairs whose solids overlap.",
+    obj({}),
+    tier="extended",
+    tags=("assemblies",),
+)
+def check_interference(args: dict) -> dict:
+    return ok(run(assemblies.check_interference))
+
+
+@registry.tool(
+    "get_assembly_bounding_box",
+    "Bounding box of the whole assembly in millimetres.",
+    obj({}),
+    tier="extended",
+    tags=("assemblies",),
+)
+def get_assembly_bounding_box(args: dict) -> dict:
+    return ok(run(assemblies.assembly_bounding_box))
+
+
+@registry.tool(
+    "new_drawing",
+    "Create a drawing from the active part/assembly (or an explicit model "
+    "path).",
+    obj(
+        {
+            "model": string(
+                "model path or title; defaults to the active document", default=None
+            ),
+            "template": string("drawing template path", default=None),
+        }
+    ),
+    tier="extended",
+    tags=("drawings",),
+)
+def new_drawing(args: dict) -> dict:
+    return ok(
+        run(lambda: drawings.create_drawing(args.get("model"), args.get("template")))
+    )
+
+
+@registry.tool(
+    "drawing_insert_view",
+    "Insert a standard view of the model onto the active drawing sheet.",
+    obj(
+        {
+            "view": string(
+                "standard view",
+                enum=["front", "back", "left", "right", "top", "bottom",
+                      "isometric", "trimetric", "dimetric"],
+            ),
+            "x_mm": number("sheet x position (mm)", default=100),
+            "y_mm": number("sheet y position (mm)", default=150),
+            "model": string("model path or title", default=None),
+        },
+        required=("view",),
+    ),
+    tier="extended",
+    tags=("drawings",),
+)
+def drawing_insert_view(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: drawings.insert_model_view(
+                args["view"],
+                args.get("x_mm", 100),
+                args.get("y_mm", 150),
+                args.get("model"),
+            )
+        )
+    )
+
+
+@registry.tool(
+    "drawing_insert_standard_views",
+    "Insert front, top and right views onto the active drawing sheet.",
+    obj(
+        {
+            "model": string("model path or title", default=None),
+            "front_mm": array(
+                "front view [x, y] on the sheet", {"type": "number"}, default=None
+            ),
+            "spacing_mm": number("view spacing (mm)", default=120),
+        }
+    ),
+    tier="extended",
+    tags=("drawings",),
+)
+def drawing_insert_standard_views(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: drawings.insert_standard_views(
+                args.get("model"),
+                args.get("front_mm"),
+                args.get("spacing_mm", 120),
+            )
+        )
+    )
+
+
+@registry.tool(
+    "list_drawing_views",
+    "List views on the active drawing with names and outlines.",
+    obj({}),
+    tier="extended",
+    tags=("drawings",),
+)
+def list_drawing_views(args: dict) -> dict:
+    return ok(run(drawings.list_drawing_views))

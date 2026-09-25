@@ -139,6 +139,20 @@ def value(member):
     return member() if callable(member) else member
 
 
+def r8_array(values):
+    """Wrap a sequence of floats as a VT_ARRAY|VT_R8 VARIANT.
+
+    SOLIDWORKS expects typed double arrays; a bare Python list is marshalled
+    as an array of variants and is silently misread (vectors come back
+    rotated or zeroed).
+    """
+    import win32com.client
+
+    return win32com.client.VARIANT(
+        pythoncom.VT_ARRAY | pythoncom.VT_R8, [float(item) for item in values]
+    )
+
+
 def call(obj, name: str, *args):
     """Get member ``name`` from ``obj`` and call it if callable."""
     member = getattr(obj, name)

@@ -80,6 +80,50 @@ the mitigation in this codebase.
 - Unknown modal dialogs must be inspected by a human; the server never
   auto-confirms them.
 
+## Typed arrays (marshalling)
+
+- SOLIDWORKS methods that take double arrays must receive
+  `VT_ARRAY|VT_R8` VARIANTs. A bare Python list is marshalled as an array of
+  variants and silently misread: `CreateVector([1, 2, 3])` comes back as
+  `(garbage, 1.0, 0.0)` and `CreateTransform` ignores most of the input.
+  Mitigation: `binding.r8_array()`.
+- `IMathTransform` has two disagreeing array layouts: the `CreateTransform`
+  input layout is not the same as the `ArrayData` output layout. Use
+  `CreateTransform(identity)` then `SetData(x_axis, y_axis, z_axis,
+  translation, scale)`; axes are the rotation matrix **rows** (verify with a
+  90-degree rotation). `ArrayData` returns rotation in 0..8 (row-major),
+  translation in 9..11, scale in 12.
+- `ArrayData` PROPPUT and `CreateTransform` with a full matrix are both
+  unreliable on this build; only getter + `SetData` round-trip correctly.
+
+## Assemblies
+
+- `AddComponent5` (and `AddComponent`/`AddComponent2`/`AddComponent4`/
+  `AddComponents`) silently return null unless the component document is
+  **already loaded in the session**. Mitigation: open the component first
+  (with an explicit document type), insert, then close it; the component
+  stays valid. This mirrors the official SOLIDWORKS VB example
+  ("Insert steel disc component" in the BeltChainFeatureData page).
+- `AddComponent5` places the component **centre** at the given coordinates;
+  re-place with `SetTransformAndSolve2` if origin placement is wanted.
+- `OpenDoc6` with type 0 (auto-detect) fails with
+  `swInvalidFileTypeError` (1024) for `.sldprt`; pass the explicit type
+  (1 = part, 2 = assembly, 3 = drawing).
+- `IAssemblyDoc.ToolsCheckInterference2` raises `DISP_E_ARRAYISLOCKED`
+  ("Memory is locked") when given a component array and finds nothing when
+  given none. Mitigation: `IInterferenceDetectionMgr`:
+  `IncludeMultibodyPartInterferences=True`,
+  `TreatCoincidenceAsInterference=False`,
+  `GetInterferenceCount()` -> `GetInterferences()` -> `IInterference.Volume`
+  (m3) and `.Components`.
+- `IComponent2.GetBox` returns null before the component's bodies are
+  resolved; do not rely on it for placement.
+
+## Drawings
+
+- `IDrawingDoc.GetViews()` returns a nested tuple on this build; flatten it
+  before wrapping the elements as `IView`.
+
 ## Feature API signatures (from this typelib, not the docs)
 
 - `FeatureExtrusion3` takes **23 arguments**.

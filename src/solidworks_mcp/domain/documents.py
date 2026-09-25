@@ -54,12 +54,18 @@ def new_document(kind: str, template: str | None = None) -> dict:
     }
 
 
+OPEN_TYPE_BY_SUFFIX = {".sldprt": 1, ".sldasm": 2, ".slddrw": 3}
+
+
 def open_document(path: str) -> dict:
     source = Path(path).expanduser()
     if not source.exists():
         raise PathNotFoundError(f"file not found: {source}")
     application = session.app()
-    result = application.OpenDoc6(str(source), 0, 1, "", 0, 0)
+    # Auto-detect (type 0) fails with swInvalidFileTypeError on this build;
+    # derive the document type from the extension instead.
+    doc_type = OPEN_TYPE_BY_SUFFIX.get(source.suffix.lower(), 0)
+    result = application.OpenDoc6(str(source), doc_type, 1, "", 0, 0)
     raw, (errors, warnings) = session.com_result(result, 2)
     if raw is None:
         raise ComCallError(

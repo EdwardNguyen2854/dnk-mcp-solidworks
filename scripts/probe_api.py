@@ -228,6 +228,9 @@ def main() -> int:
     parser.add_argument(
         "--search", metavar="REGEX", help="search member names across all types"
     )
+    parser.add_argument(
+        "--brief", action="store_true", help="compact one-line member signatures"
+    )
     args = parser.parse_args()
 
     tlb_path = args.tlb_dir / SLDWORKS_TLB
@@ -272,14 +275,34 @@ def main() -> int:
             elif args.method and name.split("::")[-1] == args.method[0]:
                 member = args.method[1]
                 if member == "*":
-                    for funcdesc in ti.GetFuncDesc:
-                        print(json.dumps(describe_method(ti, funcdesc), indent=1))
+                    for i in range(attr.cFuncs):
+                        info = describe_method(ti, ti.GetFuncDesc(i))
+                        if args.brief:
+                            params = ", ".join(
+                                f"{p['name']}:{p['type']}" for p in info["params"]
+                            )
+                            print(
+                                f"{info['invkind']} {info['name']}({params})"
+                                f" -> {info['return']}"
+                            )
+                        else:
+                            print(json.dumps(info, indent=1))
                 else:
                     funcdesc = find_member(ti, member)
                     if funcdesc is None:
                         print(f"{member} not found on {name}", file=sys.stderr)
                         return 1
-                    print(json.dumps(describe_method(ti, funcdesc), indent=1))
+                    info = describe_method(ti, funcdesc)
+                    if args.brief:
+                        params = ", ".join(
+                            f"{p['name']}:{p['type']}" for p in info["params"]
+                        )
+                        print(
+                            f"{info['invkind']} {info['name']}({params})"
+                            f" -> {info['return']}"
+                        )
+                    else:
+                        print(json.dumps(info, indent=1))
                 return 0
         if args.list:
             return 0

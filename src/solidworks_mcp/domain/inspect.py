@@ -7,6 +7,20 @@ from . import session
 
 BODY_TYPES = {"solid": 0, "sheet": 1, "wire": 2, "all": -1}
 
+# ICurve members on this build: IsLine, IsCircle, IsEllipse, IsBcurve.
+CURVE_TYPES = ("line", "circle", "ellipse", "bspline", "other")
+
+# Direction filter for list_faces; matched within ~2.5 degrees.
+NORMAL_DIRECTIONS = {
+    "+x": (1.0, 0.0, 0.0),
+    "-x": (-1.0, 0.0, 0.0),
+    "+y": (0.0, 1.0, 0.0),
+    "-y": (0.0, -1.0, 0.0),
+    "+z": (0.0, 0.0, 1.0),
+    "-z": (0.0, 0.0, -1.0),
+}
+_NORMAL_TOLERANCE = 0.999
+
 
 def _bodies(doc, body_type: str = "all", visible_only: bool = True):
     part = binding.wrap(doc, "IPartDoc")
@@ -144,8 +158,29 @@ def _curve_length(edge) -> float | None:
         return None
 
 
+def _curve_name(edge) -> str:
+    try:
+        curve = edge.GetCurve()
+        if curve is None:
+            return "other"
+        for name, check in (
+            ("line", "IsLine"),
+            ("circle", "IsCircle"),
+            ("ellipse", "IsEllipse"),
+            ("bspline", "IsBcurve"),
+        ):
+            try:
+                if binding.value(getattr(curve, check)):
+                    return name
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return "other"
+
+
 def edge_details(edge) -> dict:
-    details = {}
+    details = {"curve": _curve_name(edge)}
     length = _curve_length(edge)
     if length is not None:
         details["length_mm"] = round(units.m_to_mm(length), 6)
@@ -156,6 +191,17 @@ def edge_details(edge) -> dict:
                 details[key] = [round(units.m_to_mm(v), 4) for v in point[:3]]
         except Exception:
             continue
+    return details
+
+
+def vertex_details(vertex) -> dict:
+    details = {}
+    try:
+        point = _point_or_none(binding.value(vertex.GetPoint()))
+        if point and len(point) >= 3:
+            details["point_mm"] = [round(units.m_to_mm(v), 4) for v in point[:3]]
+    except Exception:
+        pass
     return details
 
 
@@ -180,32 +226,101 @@ def list_bodies(doc=None) -> list[dict]:
     return result
 
 
-def list_faces(doc=None, body_type: str = "all") -> list[dict]:
+def _normal_matches(normal, direction: str) -> bool:
+    if not normal or len(normal) < 3:
+        return False
+    target = NORMAL_DIRECTIONS[direction]
+    dot = sum(float(normal[index]) * target[index] for index in range(3))
+    return dot >= _NORMAL_TOLERANCE
+
+
+def list_faces(
+    doc=None,
+    body_type: str = "all",
+    surface_type: str | None = None,
+    min_area_mm2: float | None = None,
+    normal: str | None = None,
+) -> list[dict]:
+    """List faces, optionally filtered.
+
+    Filtered results keep the global selection index they would have in an
+    unfiltered listing, so the output still feeds select_faces, shell, draft
+    and measure directly.
+    """
     if doc is None:
         _, doc, _ = session.active_doc(("part",))
+    if surface_type is not None and surface_type not in ("plane", "cylinder", "cone",
+                                                         "sphere", "torus", "other"):
+        raise SelectionError(
+            f"unknown surface type {surface_type!r}",
+            available=["plane", "cylinder", "cone", "sphere", "torus", "other"],
+        )
+    if normal is not None and normal not in NORMAL_DIRECTIONS:
+        raise SelectionError(
+            f"unknown normal direction {normal!r}", available=sorted(NORMAL_DIRECTIONS)
+        )
     faces = []
     index = 0
     for body_index, body in enumerate(_bodies(doc, body_type)):
         for face in _faces(body):
             info = {"index": index, "body": body_index}
             info.update(face_details(face))
+            if surface_type is not None and info.get("surface") != surface_type:
+                index += 1
+                continue
+            if min_area_mm2 is not None and info.get("area_mm2", 0.0) < min_area_mm2:
+                index += 1
+                continue
+            if normal is not None and not _normal_matches(info.get("normal"), normal):
+                index += 1
+                continue
             faces.append(info)
             index += 1
     return faces
 
 
-def list_edges(doc=None, body_type: str = "all") -> list[dict]:
+def list_edges(
+    doc=None,
+    body_type: str = "all",
+    curve_type: str | None = None,
+    min_length_mm: float | None = None,
+) -> list[dict]:
+    """List edges, optionally filtered (global indices preserved)."""
     if doc is None:
         _, doc, _ = session.active_doc(("part",))
+    if curve_type is not None and curve_type not in CURVE_TYPES:
+        raise SelectionError(
+            f"unknown curve type {curve_type!r}", available=list(CURVE_TYPES)
+        )
     edges = []
     index = 0
     for body_index, body in enumerate(_bodies(doc, body_type)):
         for edge in _edges(body):
             info = {"index": index, "body": body_index}
             info.update(edge_details(edge))
+            if curve_type is not None and info.get("curve") != curve_type:
+                index += 1
+                continue
+            if min_length_mm is not None and info.get("length_mm", 0.0) < min_length_mm:
+                index += 1
+                continue
             edges.append(info)
             index += 1
     return edges
+
+
+def list_vertices(doc=None, body_type: str = "all") -> list[dict]:
+    if doc is None:
+        _, doc, _ = session.active_doc(("part",))
+    vertices = []
+    index = 0
+    for body_index, body in enumerate(_bodies(doc, body_type)):
+        for vertex in _vertices(body):
+            info = {"index": index, "body": body_index}
+            info.update(vertex_details(vertex))
+            vertices.append(info)
+            index += 1
+    return vertices
 
 
 def create_select_data(doc, mark: int = 0):
@@ -282,6 +397,13 @@ def select_edges(doc, indices: list[int], append: bool = False, mark: int = 0) -
     return _select_collection(doc, edges, indices, "EDGE", append, mark)
 
 
+def select_vertices(doc, indices: list[int], append: bool = False, mark: int = 0) -> int:
+    vertices = []
+    for body in _bodies(doc):
+        vertices.extend(_vertices(body))
+    return _select_collection(doc, vertices, indices, "VERTEX", append, mark)
+
+
 def mass_properties(doc=None) -> dict:
     if doc is None:
         _, doc, _ = session.active_doc(("part", "assembly"))
@@ -329,6 +451,96 @@ def bounding_box(doc=None) -> dict:
         "max_mm": maximum,
         "size_mm": [round(maximum[i] - minimum[i], 4) for i in range(3)],
     }
+
+
+# Readings IMeasure exposes; SOLIDWORKS reports -1 for the ones that do not
+# apply to the current selection.
+MEASURE_READINGS = (
+    ("Length", "length_mm", units.m_to_mm),
+    ("TotalLength", "total_length_mm", units.m_to_mm),
+    ("ArcLength", "arc_length_mm", units.m_to_mm),
+    ("ChordLength", "chord_length_mm", units.m_to_mm),
+    ("Perimeter", "perimeter_mm", units.m_to_mm),
+    ("Area", "area_mm2", units.m2_to_mm2),
+    ("TotalArea", "total_area_mm2", units.m2_to_mm2),
+    ("Distance", "distance_mm", units.m_to_mm),
+    ("NormalDistance", "normal_distance_mm", units.m_to_mm),
+    ("CenterDistance", "center_distance_mm", units.m_to_mm),
+    ("DeltaX", "delta_x_mm", units.m_to_mm),
+    ("DeltaY", "delta_y_mm", units.m_to_mm),
+    ("DeltaZ", "delta_z_mm", units.m_to_mm),
+    ("Angle", "angle_deg", units.rad_to_deg),
+    ("Diameter", "diameter_mm", units.m_to_mm),
+    ("Radius", "radius_mm", units.m_to_mm),
+)
+
+
+def measure(face_indices: list[int] | None = None,
+            edge_indices: list[int] | None = None,
+            vertex_indices: list[int] | None = None) -> dict:
+    """Measure selected topology with IModelDocExtension.CreateMeasure.
+
+    One face gives area and perimeter, one edge its length, two entities the
+    distance and delta between them.
+    """
+    _, doc, _ = session.active_doc(("part", "assembly"))
+    session.clear_selection(doc)
+    count = 0
+    first = True
+    for indices, selector in (
+        (face_indices, select_faces),
+        (edge_indices, select_edges),
+        (vertex_indices, select_vertices),
+    ):
+        if not indices:
+            continue
+        count += selector(doc, indices, append=not first)
+        first = False
+    if count == 0:
+        raise InvalidParameterError(
+            "pass face_indices, edge_indices or vertex_indices to measure"
+        )
+    measurement = binding.value(doc.Extension.CreateMeasure)
+    if measurement is None:
+        session.clear_selection(doc)
+        raise ComCallError("SOLIDWORKS did not provide a measure object")
+    measurement = binding.wrap(measurement, "IMeasure")
+    try:
+        measurement.ArcOption = 0
+    except Exception:
+        pass
+    try:
+        ok = bool(measurement.Calculate(None))
+    except Exception:
+        try:
+            ok = bool(binding.value(measurement.Calculate))
+        except Exception:
+            ok = False
+    if not ok:
+        session.clear_selection(doc)
+        raise ComCallError(
+            "SOLIDWORKS could not measure that selection", entities=count
+        )
+    readings: dict = {}
+    for member, key, convert in MEASURE_READINGS:
+        try:
+            raw = binding.value(getattr(measurement, member))
+        except Exception:
+            continue
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if number < 0:
+            continue
+        readings[key] = round(convert(number), 6)
+    session.clear_selection(doc)
+    if not readings:
+        raise ComCallError(
+            "the measurement returned no readings",
+            hint="Try a face, an edge, or two entities of the same kind.",
+        )
+    return {"entities": count, **readings}
 
 
 def whats_wrong(doc) -> dict:

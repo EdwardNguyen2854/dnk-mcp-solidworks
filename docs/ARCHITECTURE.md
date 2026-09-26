@@ -4,7 +4,7 @@
 
 ```
 MCP client
-   │ stdio (JSON-RPC)
+   │ stdio (default) or loopback Streamable HTTP (ToolHive)
    ▼
 server.py ──────────────── list_tools (tier-filtered), call_tool
    │ asyncio.to_thread
@@ -19,13 +19,24 @@ com/worker.py ──────────── one dedicated STA thread; eve
    │ job()
    ▼
 domain/* ───────────────── documents, sketch, features, inspect, assemblies,
-   │                      drawings, export  (all run on the COM thread)
+    │                      drawings, drawing_iso, export, artifacts
+    │                      (all run on the COM thread)
    ▼
 com/binding.py ─────────── makepy wrappers + QueryInterface + value()
    │
    ▼
 SOLIDWORKS COM API (metres, radians, untyped dispatches)
 ```
+
+## ToolHive transport boundary
+
+The server's normal transport is stdio. For ToolHive, the explicit
+`--transport streamable-http` mode exposes the same low-level MCP server at a
+loopback-only `/mcp` endpoint. The endpoint is an adapter, not a second COM
+path: requests still enter `server.py`, handlers still use the same registry,
+and all SOLIDWORKS calls still run on the one STA worker thread. ToolHive must
+proxy the endpoint as a remote Streamable HTTP server rather than containerize
+this process.
 
 ## Why a dedicated COM thread
 

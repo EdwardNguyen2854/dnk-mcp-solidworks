@@ -23,6 +23,7 @@ MATE_TYPES = {
     "distance": 5,
     "angle": 6,
 }
+MATE_TYPE_NAMES = {code: name for name, code in MATE_TYPES.items()}
 MATE_ALIGN = {"aligned": 0, "anti_aligned": 1, "closest": 2}
 DIRECTIONS = {
     "+x": (1.0, 0.0, 0.0),
@@ -84,6 +85,31 @@ def _find_component(doc, name: str):
         if current == name:
             return component
     raise SelectionError(f"component {name!r} not found", available=available)
+
+
+def _select_component(doc, component, append: bool) -> bool:
+    """Select a component: SelectByIDString first, direct Select2 as fallback.
+
+    IComponent2.Select2 alone fails on mated or fully defined components; the
+    assembly-qualified identifier from the component itself is reliable.
+    """
+    identifier = ""
+    try:
+        identifier = str(binding.value(component.GetSelectByIDString) or "")
+    except Exception:
+        identifier = ""
+    if identifier:
+        try:
+            if doc.Extension.SelectByID2(
+                identifier, "COMPONENT", 0, 0, 0, append, 0, None, 0
+            ):
+                return True
+        except Exception:
+            pass
+    try:
+        return bool(component.Select2(append, 0))
+    except Exception:
+        return False
 
 
 def _norm(path: str) -> str:
@@ -154,7 +180,7 @@ def insert_component(
         component.SetTransformAndSolve2(make_transform(application, x_mm, y_mm, z_mm))
         if fixed:
             session.clear_selection(doc)
-            if component.Select2(False, 0):
+            if _select_component(doc, component, append=False):
                 assembly.FixComponent()
         infos = _component_infos(doc)
         entry = next((info for info in infos if info["name"] == name), None)
@@ -404,3 +430,110 @@ def assembly_bounding_box() -> dict:
         "max_mm": maximum,
         "size_mm": [round(maximum[i] - minimum[i], 4) for i in range(3)],
     }
+
+
+def _mate_entry(feature) -> dict:
+    entry: dict = {"name": str(binding.value(feature.Name))}
+    try:
+        definition = binding.wrap(feature.GetSpecificFeature2(), "IMate2")
+    except Exception:
+        definition = None
+    if definition is None:
+        return entry
+    try:
+        code = int(binding.value(definition.Type))
+        entry["mate_type"] = MATE_TYPE_NAMES.get(code, f"type_{code}")
+    except Exception:
+        pass
+    try:
+        distance = binding.value(definition.Distance)
+        if distance is not None:
+            entry["distance_mm"] = round(units.m_to_mm(float(distance)), 6)
+    except Exception:
+        pass
+    try:
+        angle = binding.value(definition.Angle)
+        if angle is not None:
+            entry["angle_deg"] = round(units.rad_to_deg(float(angle)), 6)
+    except Exception:
+        pass
+    entities = []
+    try:
+        count = int(definition.GetMateEntityCount())
+    except Exception:
+        count = 0
+    for index in range(count):
+        try:
+            entity = binding.wrap(definition.MateEntity(index), "IMateEntity2")
+            item = {"index": index}
+            try:
+                item["reference_type"] = int(binding.value(entity.ReferenceType))
+            except Exception:
+                pass
+            try:
+                component = binding.wrap(
+                    entity.ReferenceComponent, "IComponent2"
+                )
+                item["component"] = str(binding.value(component.Name2))
+            except Exception:
+                pass
+            entities.append(item)
+        except Exception:
+            continue
+    if entities:
+        entry["entities"] = entities
+    return entry
+
+
+def list_mates() -> dict:
+    """Read the assembly's mates from the MateGroup feature children."""
+    _, doc, _ = session.active_doc(("assembly",))
+    mates = []
+    for feature in session.iter_features(doc):
+        try:
+            if str(feature.GetTypeName2()) != "MateGroup":
+                continue
+        except Exception:
+            continue
+        try:
+            child = binding.wrap(feature.GetFirstSubFeature(), "IFeature")
+        except Exception:
+            child = None
+        guard = 0
+        while child is not None and guard < 5000:
+            guard += 1
+            mates.append(_mate_entry(child))
+            try:
+                child = binding.wrap(child.GetNextSubFeature(), "IFeature")
+            except Exception:
+                break
+    return {"mates": mates, "count": len(mates)}
+
+
+def set_component_fixed(names: list[str], fixed: bool = True) -> dict:
+    if not names:
+        raise InvalidParameterError("component_names must not be empty")
+    _, doc, _ = session.active_doc(("assembly",))
+    assembly = _assembly(doc)
+    session.clear_selection(doc)
+    for index, name in enumerate(names):
+        component = _find_component(doc, name)
+        if not _select_component(doc, component, append=index > 0):
+            raise SelectionError(f"could not select component {name!r}")
+    if fixed:
+        assembly.FixComponent()
+    else:
+        assembly.UnfixComponent()
+    session.clear_selection(doc)
+    infos = _component_infos(doc)
+    selected = [
+        info
+        for info in infos
+        if any(info["name"] == name for name in names)
+    ]
+    if any(info["fixed"] != bool(fixed) for info in selected):
+        raise ComCallError(
+            f"SOLIDWORKS did not set fixed={bool(fixed)} on every component",
+            components=selected,
+        )
+    return {"components": selected, "fixed": bool(fixed)}

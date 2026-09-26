@@ -11,16 +11,23 @@ from .errors import SwMcpError
 
 DOMAINS = {
     "documents": "create/open/save/close/list; part, assembly and drawing",
-    "sketching": "planes and planar faces; lines, circles, arcs, rectangles, "
-    "polygons, splines; relations, dimensions, offset, convert",
-    "features": "boss/cut extrude, revolve, fillet, chamfer, shell",
-    "inspection": "mass properties, bounding box, feature/face/edge/body "
-    "listings, What's Wrong",
-    "export": "STEP, IGES, STL, 3MF, Parasolid, PDF, DXF, DWG; screenshots",
+    "sketching": "planes and planar faces; lines, circles, arcs, ellipses, "
+    "rectangles, polygons, splines, slots, points; relations, dimensions with "
+    "read-back and re-drive, offset, convert, trim, fillet, chamfer, mirror, "
+    "construction toggle, sketch re-editing",
+    "features": "boss/cut extrude, revolve, fillet, chamfer, shell, simple "
+    "holes, draft, sweep, loft, feature suppression, reference planes and "
+    "axes, linear/circular patterns, mirror",
+    "inspection": "mass properties, bounding box, feature/face/edge/body/"
+    "vertex listings, point and face measurement, What's Wrong",
+    "export": "STEP, IGES, STL, 3MF, Parasolid, PDF, DXF, DWG; screenshots; "
+    "structural export verification",
     "transactions": "file checkpoints and rollback",
-    "assemblies": "components, origin placement, planar-face mates, "
-    "interference detection, bounding box",
-    "drawings": "drawing from model, standard views, view listing, PDF export",
+    "assemblies": "components, origin placement, planar-face mates with "
+    "read-back, fix/float, interference detection, bounding box",
+    "drawings": "ISO metric drawing profile, framed sheets, standard views, "
+    "millimetre unit verification, model dimensions, auto-dimension, notes, "
+    "custom properties, manifests, release validation, PDF/DXF export",
 }
 
 

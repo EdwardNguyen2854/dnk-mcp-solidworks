@@ -91,15 +91,39 @@ def list_feature_infos(doc) -> list[dict]:
     return infos
 
 
-def plane_names(doc) -> list[str]:
+def _feature_names_of_type(doc, type_names: tuple[str, ...]) -> list[str]:
     names = []
     for feature in iter_features(doc):
         try:
-            if feature.GetTypeName2() == "RefPlane":
+            if feature.GetTypeName2() in type_names:
                 names.append(str(binding.value(feature.Name)))
         except Exception:
             continue
     return names
+
+
+def plane_names(doc) -> list[str]:
+    return _feature_names_of_type(doc, ("RefPlane",))
+
+
+def axis_names(doc) -> list[str]:
+    return _feature_names_of_type(doc, ("RefAxis",))
+
+
+def sketch_names(doc) -> list[str]:
+    # Sketch features report ProfileFeature on this typelib; Sketch is kept as
+    # a fallback for builds that name them literally.
+    return _feature_names_of_type(doc, ("ProfileFeature", "Sketch"))
+
+
+def resolve_name(name: str, names: list[str], kind: str) -> str:
+    token = name.strip().lower()
+    if name in names:
+        return name
+    for candidate in names:
+        if candidate.lower() == token:
+            return candidate
+    raise SelectionError(f"{kind} {name!r} not found", available=names)
 
 
 def clear_selection(doc) -> None:
@@ -127,13 +151,14 @@ def resolve_plane_name(name: str | None, names: list[str]) -> str:
     raise SelectionError(f"plane {name!r} not found", available=names)
 
 
-def select_plane(doc, name: str | None = None) -> str:
+def select_plane(doc, name: str | None = None, mark: int = 0, append: bool = False) -> str:
     names = plane_names(doc)
     if not names:
         raise SelectionError("no reference planes found in the document")
     chosen = resolve_plane_name(name, names)
-    clear_selection(doc)
-    if not doc.Extension.SelectByID2(chosen, "PLANE", 0, 0, 0, False, 0, None, 0):
+    if not append:
+        clear_selection(doc)
+    if not doc.Extension.SelectByID2(chosen, "PLANE", 0, 0, 0, append, mark, None, 0):
         raise SelectionError(f"could not select plane {chosen!r}")
     return chosen
 
@@ -143,6 +168,16 @@ def select_feature(doc, name: str, append: bool = False, mark: int = 0) -> None:
         name, "BODYFEATURE", 0, 0, 0, append, mark, None, 0
     ):
         raise SelectionError(f"could not select feature {name!r}")
+
+
+def select_sketch(doc, name: str, append: bool = False, mark: int = 0) -> str:
+    """Select a sketch feature by name (the type token is SKETCH)."""
+    resolved = resolve_name(name, sketch_names(doc), "sketch")
+    if not doc.Extension.SelectByID2(
+        resolved, "SKETCH", 0, 0, 0, append, mark, None, 0
+    ):
+        raise SelectionError(f"could not select sketch {resolved!r}")
+    return resolved
 
 
 def com_result(result, out_count: int):

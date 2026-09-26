@@ -277,6 +277,66 @@ def check_errors(args: dict) -> dict:
 
 
 @registry.tool(
+    "create_reference_plane",
+    "Create a reference plane: offset from a plane or planar face, midplane "
+    "between two references, or at an angle from a plane about a straight "
+    "edge. Use the returned plane name in create_sketch or a pattern.",
+    obj(
+        {
+            "kind": string(
+                "construction", enum=["offset", "midplane", "angle"], default="offset"
+            ),
+            "plane": string(
+                "base plane: front, top, right, or an exact plane name", default=None
+            ),
+            "face_index": integer(
+                "planar face index from list_faces as the base reference", default=None
+            ),
+            "second_plane": string("second plane for midplane", default=None),
+            "second_face_index": integer(
+                "second planar face for midplane", default=None
+            ),
+            "distance_mm": number("offset distance (mm)", default=None),
+            "angle_deg": number("angle for kind=angle (degrees)", default=None),
+            "axis_edge": integer(
+                "straight edge index from list_edges, for kind=angle", default=None
+            ),
+            "flip": boolean("flip the offset to the other side", default=False),
+            "name": string("optional name for the new plane", default=None),
+        }
+    ),
+    tags=("sketch", "reference"),
+)
+def create_reference_plane(args: dict) -> dict:
+    result = run(
+        lambda: features.create_reference_plane(
+            args.get("kind", "offset"),
+            args.get("plane"),
+            args.get("face_index"),
+            args.get("second_plane"),
+            args.get("second_face_index"),
+            args.get("distance_mm"),
+            args.get("angle_deg"),
+            args.get("axis_edge"),
+            args.get("flip", False),
+            args.get("name"),
+        )
+    )
+    return envelope(result)
+
+
+@registry.tool(
+    "list_reference_planes",
+    "List the reference planes and axes in the active part, so a sketch or "
+    "pattern can target one by exact name.",
+    obj({}),
+    tags=("sketch", "reference", "inspect"),
+)
+def list_reference_planes(args: dict) -> dict:
+    return ok(run(features.list_reference_planes))
+
+
+@registry.tool(
     "create_sketch",
     "Start a sketch on a named plane (front/top/right or exact plane name) or "
     "on a planar face selected by face_index from list_faces.",
@@ -302,7 +362,9 @@ def create_sketch(args: dict) -> dict:
 
 @registry.tool(
     "exit_sketch",
-    "Close the active sketch and rebuild.",
+    "Close the active sketch and rebuild. Drawing view sketches cannot be "
+    "closed on SW2026 SP0.0; the result reports view_sketch=true and the "
+    "sketch is consumed by the next section or detail command.",
     obj({}),
     tags=("sketch",),
 )
@@ -422,6 +484,162 @@ def sketch_polygon(args: dict) -> dict:
 
 
 @registry.tool(
+    "sketch_arc",
+    "Draw an arc in the active sketch from its centre, start point and end "
+    "point. direction 1 is counter-clockwise, -1 clockwise; the start point "
+    "sets the radius.",
+    obj(
+        {
+            "center_x_mm": number("centre x (mm)"),
+            "center_y_mm": number("centre y (mm)"),
+            "start_x_mm": number("start point x (mm)"),
+            "start_y_mm": number("start point y (mm)"),
+            "end_x_mm": number("end point x (mm)"),
+            "end_y_mm": number("end point y (mm)"),
+            "direction": integer(
+                "sweep direction", enum=[1, -1], default=1
+            ),
+        },
+        required=(
+            "center_x_mm", "center_y_mm", "start_x_mm", "start_y_mm",
+            "end_x_mm", "end_y_mm",
+        ),
+    ),
+    tags=("sketch",),
+)
+def sketch_arc(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: sketch.arc(
+                args["center_x_mm"],
+                args["center_y_mm"],
+                args["start_x_mm"],
+                args["start_y_mm"],
+                args["end_x_mm"],
+                args["end_y_mm"],
+                args.get("direction", 1),
+            )
+        )
+    )
+
+
+@registry.tool(
+    "sketch_arc_3point",
+    "Draw an arc through three points in the active sketch: start, end and a "
+    "point on the arc.",
+    obj(
+        {
+            "x1_mm": number("start x (mm)"),
+            "y1_mm": number("start y (mm)"),
+            "x2_mm": number("end x (mm)"),
+            "y2_mm": number("end y (mm)"),
+            "x3_mm": number("point on the arc x (mm)"),
+            "y3_mm": number("point on the arc y (mm)"),
+        },
+        required=("x1_mm", "y1_mm", "x2_mm", "y2_mm", "x3_mm", "y3_mm"),
+    ),
+    tags=("sketch",),
+)
+def sketch_arc_3point(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: sketch.three_point_arc(
+                args["x1_mm"],
+                args["y1_mm"],
+                args["x2_mm"],
+                args["y2_mm"],
+                args["x3_mm"],
+                args["y3_mm"],
+            )
+        )
+    )
+
+
+@registry.tool(
+    "sketch_ellipse",
+    "Draw an ellipse in the active sketch from its centre, a major-axis point "
+    "and a minor-axis point.",
+    obj(
+        {
+            "center_x_mm": number("centre x (mm)"),
+            "center_y_mm": number("centre y (mm)"),
+            "major_x_mm": number("major-axis endpoint x (mm)"),
+            "major_y_mm": number("major-axis endpoint y (mm)"),
+            "minor_x_mm": number("minor-axis endpoint x (mm)"),
+            "minor_y_mm": number("minor-axis endpoint y (mm)"),
+        },
+        required=(
+            "center_x_mm", "center_y_mm", "major_x_mm", "major_y_mm",
+            "minor_x_mm", "minor_y_mm",
+        ),
+    ),
+    tags=("sketch",),
+)
+def sketch_ellipse(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: sketch.ellipse(
+                args["center_x_mm"],
+                args["center_y_mm"],
+                args["major_x_mm"],
+                args["major_y_mm"],
+                args["minor_x_mm"],
+                args["minor_y_mm"],
+            )
+        )
+    )
+
+
+@registry.tool(
+    "sketch_point",
+    "Draw a sketch point in the active sketch, for use as a pierce or hole "
+    "position reference.",
+    obj(
+        {"x_mm": number("x (mm)"), "y_mm": number("y (mm)")},
+        required=("x_mm", "y_mm"),
+    ),
+    tags=("sketch",),
+)
+def sketch_point(args: dict) -> dict:
+    return ok(run(lambda: sketch.point(args["x_mm"], args["y_mm"])))
+
+
+@registry.tool(
+    "sketch_construction",
+    "Toggle selected sketch segments between normal and construction geometry.",
+    obj(
+        {
+            "segment_indices": array(
+                "indices from list_sketch_segments", {"type": "integer"}
+            ),
+            "construction": boolean("true makes construction geometry", default=True),
+        },
+        required=("segment_indices",),
+    ),
+    tags=("sketch",),
+)
+def sketch_construction(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: sketch.set_construction(
+                args["segment_indices"], args.get("construction", True)
+            )
+        )
+    )
+
+
+@registry.tool(
+    "list_sketches",
+    "List every sketch feature with segment count and constrained status; the "
+    "feed for edit_sketch.",
+    obj({}),
+    tags=("sketch", "inspect"),
+)
+def list_sketches(args: dict) -> dict:
+    return ok(run(sketch.list_sketches))
+
+
+@registry.tool(
     "list_sketch_segments",
     "List segments in the active sketch with indices for selection and "
     "dimensioning.",
@@ -488,6 +706,47 @@ def sketch_add_relation(args: dict) -> dict:
     )
 
 
+@registry.tool(
+    "list_dimensions",
+    "Read back the driving dimensions of the document, with the full_name "
+    "values set_dimension accepts.",
+    obj(
+        {
+            "feature_name": string(
+                "only list dimensions of this feature or sketch", default=None
+            )
+        }
+    ),
+    tags=("sketch", "inspect"),
+)
+def list_dimensions(args: dict) -> dict:
+    return ok(run(lambda: sketch.list_dimensions(args.get("feature_name"))))
+
+
+@registry.tool(
+    "set_dimension",
+    "Drive an existing dimension by its full name from list_dimensions. Linear "
+    "dimensions take value_mm, angular ones value_deg.",
+    obj(
+        {
+            "full_name": string("dimension name, e.g. 'D1@Sketch1'"),
+            "value_mm": number("new linear value (mm)", default=None),
+            "value_deg": number("new angular value (degrees)", default=None),
+        },
+        required=("full_name",),
+    ),
+    tags=("sketch",),
+)
+def set_dimension(args: dict) -> dict:
+    return ok(
+        run(
+            lambda: sketch.set_dimension(
+                args["full_name"], args.get("value_mm"), args.get("value_deg")
+            )
+        )
+    )
+
+
 def _extrude_schema() -> dict[str, Any]:
     return {
         "depth_mm": number("depth (mm); required unless through_all_both", default=None),
@@ -525,11 +784,15 @@ def boss_extrude(args: dict) -> dict:
 @registry.tool(
     "cut_extrude",
     "Cut-extrude the sketch shown on screen. through_all_both is translated "
-    "internally to a two-direction through-all cut.",
+    "internally to a two-direction through-all cut. If the requested direction "
+    "removes nothing, the other direction is tried automatically.",
     obj(
         {
             **_extrude_schema(),
             "normal_cut": boolean("use normal cut (sheet metal)", default=False),
+            "flip_side": boolean(
+                "remove everything outside the profile instead", default=False
+            ),
         }
     ),
     tags=("features",),
@@ -543,6 +806,7 @@ def cut_extrude(args: dict) -> dict:
             args.get("reverse", False),
             args.get("both_directions", False),
             args.get("normal_cut", False),
+            args.get("flip_side", False),
             args.get("name"),
         )
     )

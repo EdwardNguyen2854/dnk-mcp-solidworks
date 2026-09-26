@@ -8,7 +8,7 @@ from pathlib import Path
 from ..com import binding
 from ..config import get_config
 from ..errors import ComCallError, InvalidParameterError, PathNotFoundError
-from . import session
+from . import artifacts, session
 
 EXPORT_FORMATS = {
     "step": ".step",
@@ -62,6 +62,7 @@ def export_document(path: str, file_format: str | None = None) -> dict:
         "path": str(target),
         "size_bytes": size,
         "format": target.suffix.lstrip("."),
+        "artifact": artifacts.sniff(target),
     }
 
 

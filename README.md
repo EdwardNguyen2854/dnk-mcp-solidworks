@@ -38,20 +38,34 @@ geometry — the same API returns null, False or stale values in equal measure
 ## Highlights
 
 - **Part modelling loop** — sketch on planes or planar faces; lines, circles,
-  arcs, rectangles, polygons, splines; relations, driving dimensions, offset,
-  convert; boss/cut extrude (including a corrected `through_all_both`),
-  revolve, fillet, chamfer, shell, materials.
+  arcs (centre and 3-point), ellipses, rectangles, polygons, splines, slots,
+  points; relations, driving dimensions with read-back and re-drive, offset,
+  convert, trim, fillet, chamfer, mirror, construction toggle, sketch
+  re-editing; boss/cut extrude (including a corrected `through_all_both`),
+  revolve, fillet, chamfer, shell, simple holes, draft, sweep, loft, feature
+  suppression, materials; reference planes and axes; linear and circular
+  patterns; mirror.
 - **Closed-loop verification** — mass properties, bounding box, What's Wrong,
-  feature/face/edge/body listings, and a screenshot returned as image content
-  so the agent can look at what it built.
+  feature/face/edge/body/vertex listings, point-to-point and face measurement,
+  and a screenshot returned as image content so the agent can look at what it
+  built.
 - **Assemblies** — insert components with deterministic origin placement,
-  move/rotate with read-back verification, mate planar faces by direction,
-  detect interference with overlap volumes.
-- **Drawings** — create a drawing from a model, insert standard views, list
-  views, export PDF/DXF.
+  move/rotate with read-back verification, mate planar faces by direction, read
+  mates back, fix/float components, detect interference with overlap volumes.
+- **Drawings** — create a drawing from a model, manage sheets (list/add/
+  activate, paper size and scale), insert standard, projected, section and
+  detail views, move/rescale/restyle views, sketch in a view, add center marks
+  and centerlines, import model dimensions, generate DimXpert
+  auto-dimensions, add notes, set dimension tolerances (symmetric, bilateral,
+  limits, ISO fits), add datum tags, geometric tolerance frames and surface
+  finish symbols, insert revision tables, add assembly BOM tables and
+  auto-balloons, attempt hole callouts (Hole Wizard holes), manage ISO
+  title-block properties, collect a drawing manifest, validate observable ISO
+  state, read every annotation back, export PDF/DXF.
 - **Transactions** — file checkpoints with debounce, listing and rollback.
 - **Export** — STEP, IGES, STL, 3MF, Parasolid, PDF, DXF, DWG, images, with
-  file-existence and size verification.
+  file-existence and size verification, plus structural verification of the
+  written artifact (PDF pages, DXF entities and extents, STL triangles).
 - **Tiered tool surface** — `core` / `extended` / `advanced` / `debug` and a
   `search_tools` meta-tool, so the agent's tool selection stays accurate.
 
@@ -110,6 +124,53 @@ claude mcp add solidworks -- D:\path\to\.venv\Scripts\python.exe -m solidworks_m
 Call `get_capabilities` first: it reports the live SOLIDWORKS revision, the
 typelib binding, discovered templates and the active policy.
 
+### ToolHive
+
+ToolHive normally runs MCP servers in containers. This server cannot run inside
+that container because it must share the Windows host process/session with the
+already-running SOLIDWORKS application. Use the opt-in loopback HTTP adapter
+instead; the COM worker remains in this Python process and ToolHive only
+proxies MCP traffic to it.
+
+Install the HTTP extra, start SOLIDWORKS, and run the host process in one
+PowerShell window:
+
+```powershell
+python -m pip install -e ".[dev,toolhive]"
+python -m solidworks_mcp --transport streamable-http --host 127.0.0.1 --port 8765
+```
+
+Before registering a workload, start Docker Desktop (or another
+Docker-compatible runtime). ToolHive requires an available container runtime
+for its workload manager. If the ToolHive CLI is not on `PATH`, open a new
+PowerShell window or add its installed location for the current window:
+
+```powershell
+$env:Path += ";$env:LOCALAPPDATA\ToolHive\bin"
+thv version
+```
+
+In a second PowerShell window, register the host endpoint with ToolHive:
+
+```powershell
+thv run --name solidworks --transport streamable-http --proxy-port 8766 `
+  http://127.0.0.1:8765/mcp
+```
+
+Then use `thv list` to see the ToolHive proxy and connect your AI client to
+that proxy. To inspect the tools directly:
+
+```powershell
+thv mcp list tools --server http://127.0.0.1:8766/mcp
+```
+
+The ToolHive UI uses the same values under **Add remote MCP server**:
+`http://127.0.0.1:8765/mcp`, transport **Streamable HTTP**, and no
+authentication. The endpoint binds to loopback only and the default stdio
+transport is unchanged. If `thv` is not found after installing ToolHive UI,
+open a new PowerShell window so its `%LOCALAPPDATA%\ToolHive\bin` entry is
+loaded.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -141,20 +202,35 @@ Machine-specific overrides can also live in a gitignored
 - A modal-dialog guard disables `swInputDimValOnCreate` around dimension
   creation — on this build leaving it on crashes the session.
 
+## Workflow skills
+
+The tool catalog is the capability layer; `skills/<name>/SKILL.md` carries the
+procedure layer (order of operations, defaults, stop conditions) that turns
+the tools into a repeatable workflow. The bundled pack is
+`iso-engineering-drawing`, `cad-house-standard`, `drawing-acceptance` and
+`sheet-layout`. Install them into the directory your agent client scans:
+
+```powershell
+python -m solidworks_mcp --install-skill "D:\path\to\agent\skills"
+```
+
+Keep the skill and the server in sync: the skill names the tools it calls.
+
 ## Tool surface
 
 Run `python -m solidworks_mcp --list-tools` for the authoritative catalog.
-Roughly 60 tools across:
+127 tools across:
 
 | Domain | Examples |
 |---|---|
-| Session / documents | `get_status`, `get_capabilities`, `new_document`, `open_document`, `save_document`, `close_document`, `search_tools` |
-| Sketch | `create_sketch`, `sketch_rectangle`, `sketch_circle`, `sketch_line`, `sketch_polygon`, `sketch_spline`, `sketch_add_dimension`, `sketch_add_relation`, `list_sketch_segments` |
-| Features | `boss_extrude`, `cut_extrude`, `revolve`, `fillet`, `chamfer`, `shell`, `set_material`, `rename_feature`, `delete_feature` |
-| Inspection | `list_features`, `list_faces`, `list_edges`, `list_bodies`, `get_mass_properties`, `get_bounding_box`, `check_errors` |
-| View / export | `set_view`, `capture_screenshot`, `export_document` |
-| Assemblies | `insert_component`, `list_components`, `set_component_transform`, `add_mate`, `check_interference`, `get_assembly_bounding_box` |
-| Drawings | `new_drawing`, `drawing_insert_view`, `drawing_insert_standard_views`, `list_drawing_views` |
+| Session / documents | `get_status`, `get_capabilities`, `new_document`, `open_document`, `save_document`, `close_document`, `search_tools`, `set_file_property` (custom properties for title-block links) |
+| Sketch | `create_sketch`, `edit_sketch`, `list_sketches`, `sketch_rectangle`, `sketch_circle`, `sketch_line`, `sketch_arc`, `sketch_arc_3point`, `sketch_ellipse`, `sketch_slot`, `sketch_point`, `sketch_polygon`, `sketch_spline`, `sketch_trim`, `sketch_fillet`, `sketch_chamfer`, `sketch_mirror`, `sketch_construction`, `sketch_offset`, `sketch_convert_entities`, `sketch_add_dimension`, `sketch_add_relation`, `list_sketch_segments`, `list_dimensions`, `set_dimension` |
+| Features | `boss_extrude`, `cut_extrude`, `revolve`, `fillet`, `chamfer`, `shell`, `simple_hole`, `draft`, `sweep`, `loft`, `set_feature_suppression`, `linear_pattern`, `circular_pattern`, `mirror_feature`, `set_material`, `set_appearance`, `rename_feature`, `delete_feature` |
+| Reference geometry | `create_reference_plane`, `create_axis`, `list_reference_planes` |
+| Inspection | `list_features`, `list_faces` (surface/normal/area filters), `list_edges` (curve/length filters), `list_bodies`, `list_vertices`, `measure`, `get_mass_properties`, `get_bounding_box`, `check_errors` |
+| View / export | `set_view`, `capture_screenshot`, `export_document`, `verify_export` |
+| Assemblies | `insert_component`, `list_components`, `set_component_transform`, `set_component_fixed`, `add_mate`, `list_mates`, `check_interference`, `get_assembly_bounding_box` |
+| Drawings | `new_drawing` (framed A3 default), `drawing_set_iso_units`, `drawing_set_sheet_format`, `list_drawing_sheets`, `drawing_add_sheet`, `drawing_activate_sheet`, `drawing_insert_view`, `drawing_insert_standard_views`, `drawing_insert_projected_view`, `drawing_insert_section_view`, `drawing_insert_detail_view`, `drawing_activate_view`, `drawing_set_view`, `drawing_create_sketch`, `drawing_insert_center_marks`, `drawing_insert_centerlines`, `list_drawing_views`, `list_drawing_view_edges`, `drawing_insert_model_dimensions`, `drawing_auto_dimension` (arranged), `drawing_arrange_dimensions`, `drawing_add_dimension` (picked edges), `list_drawing_dimensions`, `drawing_set_dimension_tolerance`, `drawing_insert_general_tolerance_table`, `drawing_insert_datum`, `drawing_insert_gtol`, `drawing_insert_surface_finish`, `drawing_insert_revision_table`, `drawing_add_revision`, `drawing_insert_bom_table`, `drawing_insert_balloons`, `drawing_insert_hole_callout`, `drawing_add_note`, `list_drawing_annotations`, `drawing_move_annotation`, `drawing_delete_annotation`, `drawing_set_annotation_text`, `drawing_delete_view`, `list_drawing_properties`, `drawing_set_property`, `drawing_manifest`, `drawing_layout_audit` (estimated annotation boxes, collisions, off-frame items), `drawing_preflight`, `validate_iso_drawing` |
 | Transactions | `create_checkpoint`, `list_checkpoints`, `rollback_to_checkpoint` |
 
 ## Testing
@@ -165,26 +241,42 @@ python -m pytest tests/unit
 
 # live acceptance: needs a running SOLIDWORKS session
 python scripts/mcp_smoke.py            # MCP over stdio, box volume vs hand calc
-python scripts/acceptance.py           # 11 geometry checks (fillet, shell, cut, revolve, dimension)
-python scripts/acceptance_asm_drw.py   # 17 assembly + drawing checks
+python scripts/acceptance.py           # 43 geometry checks (fillet, shell, cut, revolve, dimensions, patterns, mirror, reference planes, arcs/slots/ellipses, trim/mirror/fillet/chamfer, hole, draft, sweep, loft, suppression, axis, measure)
+python scripts/acceptance_asm_drw.py   # assembly + drawing checks (mates read-back, fix/float, interference, framed sheets, projected/section/detail views, center marks, appearance, arranged dimensions, ISO properties/validation, PDF/DXF verification)
+python scripts/acceptance_asm_drw.py drawing_tools  # run a named group only
+python scripts/acceptance_iso_annotations.py        # ISO annotation suite (tolerances, datums/GD&T, surface finish, revision table)
+python scripts/acceptance_drawing_edit.py           # annotation edit + picked-geometry dimensions + checkpoint/rollback
+python scripts/iso_drawing_demo.py                  # end-to-end ISO drawing demo (closes its documents when done)
+python scripts/iso_flange_demo.py                   # revolved flange housing part + full ISO A3 drawing, 76 checks
 ```
 
 Every live check compares measured geometry (volume, position, interference
-volume, bounding box) against hand calculations, not against "it looked fine".
+volume, bounding box, DXF extents) against hand calculations, not against "it
+looked fine".
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` (planned) — module map and threading model
+- `docs/ARCHITECTURE.md` — module map and threading model
 - `docs/COM-QUIRKS.md` — the measured API quirks this server works around
+- `docs/PRIOR-ART.md` — the public reference servers, what we learned from
+  each, and what is still unmined
+- `docs/ISO-DRAWING.md` — ISO metric drawing profile, workflow and validation
+- `skills/iso-engineering-drawing/SKILL.md` — reusable ISO drawing procedure
 - `docs/adr/0001-binding-strategy.md` — why early binding and interface wrapping
 - `scripts/probe_api.py` — inspect the installed typelib (`--method`,
   `--enum`, `--search`, `--brief`)
 
 ## Roadmap
 
-- Patterns and mirror features; equations and configurations
-- Model-state diffing, section probes, native-geometry export verification
-- Drawing dimensions and annotations; PDF/DXF round-trip checks
+- Selection specs: point and `face_edges` specs, and mate editing / face-pair
+  mates by index
+- Hole callouts: the tool refuses holes without callout data on SW2026 SP0.0
+  (verified on `SimpleHole2`, sketch-cut and practice-part holes); verify with
+  a Hole Wizard part. `IFeatureManager.HoleWizard5` exists on this typelib but
+  created no feature under every tested parameter set, and the session crashed
+  in `mfc140u.dll` during that probing — re-probe carefully on a fresh session
+- `rib` (measured: `InsertRib` builds nothing on this SW2026 SP0.0 build; re-probe on a later build)
+- Equations and configurations; model-state diffing and section probes
 - Batch/plan execution and richer idempotency accounting
 
 ## License

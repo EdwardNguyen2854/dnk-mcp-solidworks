@@ -79,13 +79,54 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="solidworks-mcp-core")
     parser.add_argument("--tier", choices=VALID_TIERS, help="tool tier override")
     parser.add_argument(
+        "--transport",
+        choices=("stdio", "streamable-http"),
+        default="stdio",
+        help="MCP transport; streamable-http is loopback-only and intended for ToolHive",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="loopback host for streamable-http (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="port for streamable-http (default: 8765)",
+    )
+    parser.add_argument(
+        "--http-path",
+        default="/mcp",
+        help="endpoint path for streamable-http (default: /mcp)",
+    )
+    parser.add_argument(
         "--list-tools", action="store_true", help="print the tool catalog and exit"
     )
     parser.add_argument(
         "--check", action="store_true", help="print live capabilities and exit"
     )
+    parser.add_argument(
+        "--install-skill",
+        metavar="DIR",
+        help="copy the bundled workflow skills into DIR and exit",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
+
+    if args.transport == "streamable-http":
+        from .http_transport import is_loopback_host
+
+        if not is_loopback_host(args.host):
+            parser.error("--host must be localhost or a loopback IP for streamable-http")
+        if not 1 <= args.port <= 65535:
+            parser.error("--port must be between 1 and 65535")
+        if (
+            not args.http_path.startswith("/")
+            or "?" in args.http_path
+            or "#" in args.http_path
+        ):
+            parser.error("--http-path must be an absolute path without query or fragment")
 
     config = load_config(tool_tier=args.tier)
     setup_logging(config)
@@ -94,6 +135,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_tools:
         for spec in registry.visible_tools(config.tool_tier):
             print(f"{spec.tier:9} {spec.name:28} {spec.description.splitlines()[0]}")
+        return 0
+
+    if args.install_skill:
+        from .skills import install_skills
+
+        installed = install_skills(args.install_skill)
+        for path in installed:
+            print(path)
         return 0
 
     worker = ComWorker(timeout=config.operation_timeout_sec)
@@ -113,7 +162,19 @@ def main(argv: list[str] | None = None) -> int:
         log.info(
             "solidworks-mcp-core %s starting (tier=%s)", __version__, config.tool_tier
         )
-        asyncio.run(_serve())
+        if args.transport == "streamable-http":
+            from .http_transport import serve_streamable_http
+
+            asyncio.run(
+                serve_streamable_http(
+                    server,
+                    host=args.host,
+                    port=args.port,
+                    path=args.http_path,
+                )
+            )
+        else:
+            asyncio.run(_serve())
     finally:
         worker.stop()
     return 0

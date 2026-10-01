@@ -84,6 +84,24 @@ class SelectionError(SwMcpError):
     recoverable = True
 
 
+class ReferenceNotFoundError(SwMcpError):
+    code = "REFERENCE_NOT_FOUND"
+    recoverable = True
+    hint = "Ask the engineer to re-select the entity."
+
+
+class ReferenceAmbiguousError(SwMcpError):
+    code = "REFERENCE_AMBIGUOUS"
+    recoverable = True
+    hint = "The reference cannot be resolved to one entity; re-select it."
+
+
+class ReferenceDocumentMismatchError(SwMcpError):
+    code = "REFERENCE_DOCUMENT_MISMATCH"
+    recoverable = True
+    hint = "Activate the document the reference was captured in."
+
+
 class FeatureBuildError(SwMcpError):
     code = "FEATURE_FAILED"
     recoverable = True

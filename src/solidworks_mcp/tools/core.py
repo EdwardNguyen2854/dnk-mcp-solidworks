@@ -6,7 +6,7 @@ from typing import Any
 from .. import capabilities as capabilities_module
 from .. import registry
 from ..com.worker import run
-from ..domain import documents, export, features, inspect, session, sketch
+from ..domain import documents, export, features, inspect, references, session, sketch
 from ..errors import ok
 from ..registry import array, boolean, integer, number, obj, string
 
@@ -274,6 +274,39 @@ def check_errors(args: dict) -> dict:
         return inspect.whats_wrong(doc)
 
     return ok(run(job))
+
+
+@registry.tool(
+    "get_selection",
+    "Read bounded document-scoped references for the engineer's current selection.",
+    obj({}),
+    tags=("inspect", "selection"),
+)
+def get_selection(args: dict) -> dict:
+    return ok(run(references.capture_selection))
+
+
+@registry.tool(
+    "resolve_entity_reference",
+    "Revalidate an opaque selection reference; fail closed on missing or ambiguous identity.",
+    obj({"ref": string("opaque reference from get_selection")}, required=("ref",)),
+    tags=("inspect", "selection"),
+)
+def resolve_entity_reference(args: dict) -> dict:
+    return ok(run(lambda: references.resolve_entity_reference(args["ref"])))
+
+
+@registry.tool(
+    "highlight_entities",
+    "Select referenced entities as visual feedback, not a preview. Legacy clear clears selection.",
+    obj({
+        "refs": array("references from get_selection", {"type": "string"}, default=[]),
+        "clear": boolean("clear selection", default=False),
+    }),
+    tags=("selection",),
+)
+def highlight_entities(args: dict) -> dict:
+    return ok(run(lambda: references.highlight_entities(args.get("refs", []), args.get("clear", False))))
 
 
 @registry.tool(

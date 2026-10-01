@@ -404,6 +404,21 @@ def select_vertices(doc, indices: list[int], append: bool = False, mark: int = 0
     return _select_collection(doc, vertices, indices, "VERTEX", append, mark)
 
 
+def topology_entities(doc, kind: str) -> list:
+    """Raw topology in the same global index order as the listing tools."""
+    if kind not in ("face", "edge", "vertex"):
+        raise SelectionError(f"unknown topology kind {kind!r}")
+    entities = []
+    for body in _bodies(doc):
+        if kind == "face":
+            entities.extend(_faces(body))
+        elif kind == "edge":
+            entities.extend(_edges(body))
+        else:
+            entities.extend(_vertices(body))
+    return entities
+
+
 def mass_properties(doc=None) -> dict:
     if doc is None:
         _, doc, _ = session.active_doc(("part", "assembly"))

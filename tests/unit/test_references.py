@@ -5,7 +5,9 @@ import pytest
 
 from solidworks_mcp.com import binding
 from solidworks_mcp.domain import references, session
-from solidworks_mcp.errors import ReferenceAmbiguousError, ReferenceNotFoundError
+from solidworks_mcp.errors import (
+    ComCallError, ReferenceAmbiguousError, ReferenceNotFoundError, SelectionError,
+)
 
 
 class Face:
@@ -13,11 +15,14 @@ class Face:
         self.persist = persist
         self.area = area
         self.Normal = [0.0, 0.0, 1.0]
+        self.unreadable = False
 
     def GetSurface(self):
         return SimpleNamespace(IsPlane=True)
 
     def GetArea(self):
+        if self.unreadable:
+            raise RuntimeError("COM area read failed")
         return self.area / 1_000_000
 
     def GetBox(self):
@@ -28,14 +33,17 @@ class Document:
     def __init__(self):
         self.faces = [Face(b"original")]
         self.selection = [self.faces[0]]
+        self.selection_type = 2
+        self.clear_calls = 0
         self.Extension = SimpleNamespace(
             GetPersistReference3=lambda entity: entity.persist,
             IsSamePersistentID=lambda first, second: first == second,
+            GetObjectByPersistReference3=lambda persist, error: (self.faces[0], 0),
         )
         self.SelectionManager = SimpleNamespace(
             GetSelectedObjectCount2=lambda mark: len(self.selection),
             GetSelectedObject6=lambda position, mark: self.selection[position - 1],
-            GetSelectedObjectType3=lambda position, mark: 2,
+            GetSelectedObjectType3=lambda position, mark: self.selection_type,
         )
 
     def GetBodies2(self, kind, visible):
@@ -52,6 +60,10 @@ class Document:
 
     def GetSaveFlag(self):
         return False
+
+    def ClearSelection2(self, all_marks):
+        self.clear_calls += 1
+        self.selection.clear()
 
 
 @pytest.fixture
@@ -98,3 +110,35 @@ def test_missing_reference_fails_closed(doc):
     doc.faces.clear()
     with pytest.raises(ReferenceNotFoundError):
         references.resolve_entity_reference(reference)
+
+
+def test_unverifiable_persistent_identity_does_not_select_an_impostor(doc):
+    reference = references.capture_selection()["entities"][0]["ref"]
+    doc.faces[0].area = 400.0
+    doc.faces.append(Face(b"impostor", area=100.0))
+    def compare(first, second):
+        if second == b"original":
+            raise RuntimeError("COM comparison failed")
+        return first == second
+    doc.Extension.IsSamePersistentID = compare
+    with pytest.raises(ComCallError):
+        references.resolve_entity_reference(reference)
+
+
+def test_unreadable_candidate_does_not_make_fallback_appear_unique(doc):
+    reference = references.capture_selection()["entities"][0]["ref"]
+    doc.faces[0].persist = b"changed"
+    doc.faces[0].unreadable = True
+    doc.faces.append(Face(b"impostor", area=100.0))
+    with pytest.raises(ComCallError):
+        references.resolve_entity_reference(reference)
+
+
+def test_unsupported_highlight_keeps_engineer_selection(doc):
+    doc.selection_type = 4
+    reference = references.capture_selection()["entities"][0]["ref"]
+    baseline = list(doc.selection)
+    with pytest.raises(SelectionError):
+        references.highlight_entities([reference])
+    assert doc.selection == baseline
+    assert doc.clear_calls == 0

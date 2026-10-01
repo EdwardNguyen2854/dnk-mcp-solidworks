@@ -21,6 +21,17 @@ Public API regression tests use fake external COM objects. They do not claim new
 SOLIDWORKS evidence. Existing measured spike evidence remains in the original project
 and Datum ADR-0011; this isolated extraction must be live-accepted separately.
 
+Review follow-up: failure to read/compare a persistent identity is not proof of loss
+and now fails explicitly. Unreadable/incomplete geometry candidates also fail rather
+than being discarded or treated as non-matches. This is intentionally conservative:
+one incomplete topology candidate can make resolution unavailable. Tests reproduce
+both wrong-face paths and confirm that fallback still succeeds when comparisons
+complete and find no persistent match.
+
+Unsupported highlight kinds are now rejected before clearing selection. Selection-call
+failures after a supported highlight starts can still leave partial selection; this
+legacy API remains unsuitable for owned review cleanup.
+
 ## Open gates
 
 - Owner-scoped highlight apply/clear and preservation of engineer-owned selection.

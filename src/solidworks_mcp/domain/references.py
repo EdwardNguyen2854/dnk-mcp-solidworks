@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from typing import Any
 
 from ..com import binding
 from ..errors import (
+    ComCallError,
     InvalidParameterError,
     ReferenceAmbiguousError,
     ReferenceDocumentMismatchError,
@@ -151,10 +153,36 @@ def _entities_with_details(doc, kind: str) -> list[tuple[int, Any, dict]]:
     rows = []
     for index, entity in enumerate(inspect.topology_entities(doc, kind)):
         try:
-            rows.append((index, entity, TOPOLOGY_DESCRIBERS[kind](entity)))
-        except Exception:
-            continue
+            details = TOPOLOGY_DESCRIBERS[kind](entity)
+        except Exception as error:
+            raise ComCallError("cannot enumerate complete reference candidates") from error
+        # The listing helpers suppress some COM getter errors. Do not mistake
+        # a partial measurement for a confidently excluded identity candidate.
+        if kind == "face":
+            area = details.get("area_mm2")
+            box = details.get("box_mm")
+            if (not isinstance(area, (int, float)) or not math.isfinite(area)
+                    or not isinstance(box, dict)
+                    or not _finite_vector(box.get("min"))
+                    or not _finite_vector(box.get("max"))
+                    or (details.get("surface") == "plane"
+                        and not _finite_vector(details.get("normal")))):
+                raise ComCallError("a reference candidate has incomplete face geometry")
+        elif kind == "edge":
+            length = details.get("length_mm")
+            if (not isinstance(length, (int, float)) or not math.isfinite(length)
+                    or not _finite_vector(details.get("start_mm"))
+                    or not _finite_vector(details.get("end_mm"))):
+                raise ComCallError("a reference candidate has incomplete edge geometry")
+        elif not _finite_vector(details.get("point_mm")):
+            raise ComCallError("a reference candidate has incomplete vertex geometry")
+        rows.append((index, entity, details))
     return rows
+
+
+def _finite_vector(value) -> bool:
+    return (isinstance(value, (list, tuple)) and len(value) == 3
+            and all(isinstance(item, (int, float)) and math.isfinite(item) for item in value))
 
 
 def _face_matches(candidate: dict, fp: dict) -> bool:
@@ -209,18 +237,21 @@ def _matches(kind: str, candidate: dict, fp: dict) -> bool:
 def _index_by_persist(doc, kind: str, persist: bytes, rows) -> int | None:
     try:
         extension = binding.wrap(doc.Extension, "IModelDocExtension")
-    except Exception:
-        return None
+    except Exception as error:
+        raise ComCallError("cannot verify persistent identity") from error
     matches = []
     for index, entity, _details in rows:
         candidate = _persist_of(doc, entity)
         if not candidate:
-            continue
+            raise ComCallError("cannot read a candidate's persistent identity")
         try:
-            if extension.IsSamePersistentID(persist, candidate):
+            same = extension.IsSamePersistentID(persist, candidate)
+            if same is None:
+                raise ComCallError("persistent identity comparison returned no result")
+            if same:
                 matches.append(index)
-        except Exception:
-            continue
+        except Exception as error:
+            raise ComCallError("persistent identity comparison failed") from error
     if len(matches) > 1:
         raise ReferenceAmbiguousError("multiple current entities share the persistent identity")
     return matches[0] if matches else None
@@ -298,13 +329,14 @@ def highlight_entities(refs: list[str], clear: bool = False) -> dict:
     for reference in refs:
         payload = decode_reference(reference)
         _check_scope(doc, payload)
-        resolved.append(_resolve(doc, payload))
+        item = _resolve(doc, payload)
+        if item["kind"] not in TOPOLOGY_KINDS or item["index"] is None:
+            raise SelectionError("cannot highlight this reference kind")
+        resolved.append(item)
     session.clear_selection(doc)
     highlighted = 0
     for item in resolved:
         kind, index = item["kind"], item["index"]
-        if kind not in TOPOLOGY_KINDS or index is None:
-            raise SelectionError("cannot highlight this reference kind")
         if kind == "face":
             inspect.select_faces(doc, [index], append=highlighted > 0)
         elif kind == "edge":

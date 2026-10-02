@@ -174,14 +174,15 @@ def set_view(args: dict) -> dict:
 @registry.tool(
     "capture_screenshot",
     "Save a view as an image and return it as image content so the model can "
-    "be looked at.",
+    "be looked at. `view: \"current\"` captures without moving the camera.",
     obj(
         {
             "path": string("optional output path (sandboxed)", default=None),
             "view": string(
-                "standard view to apply first",
-                enum=["front", "back", "left", "right", "top", "bottom",
-                      "isometric", "trimetric", "dimetric"],
+                "standard view to apply first, or 'current' to leave the camera "
+                "where the engineer left it",
+                enum=["current", "front", "back", "left", "right", "top",
+                      "bottom", "isometric", "trimetric", "dimetric"],
                 default="isometric",
             ),
             "width": integer("image width in pixels", default=1600),

@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `capture_screenshot` accepts `view: "current"`, which captures the engineer's
+  current camera without applying a standard view first. The existing default
+  (`isometric`) is unchanged, so current callers behave exactly as before; an
+  agent-facing integration can now look at the model without rotating the
+  viewport.
 - Drawing annotation editing: `list_drawing_annotations` now reports a stable
   per-view `index`, the dimension `reading` (value with prefix/suffix) and a
   note's `resolved_text` for `$PRP` property links. New tools

@@ -1,6 +1,7 @@
 """Solid features: extrude, cut, revolve, fillet, chamfer, shell, material."""
 from __future__ import annotations
 
+import math
 from ..com import binding, units
 from ..errors import (
     ComCallError,
@@ -8,7 +9,7 @@ from ..errors import (
     InvalidParameterError,
     SelectionError,
 )
-from . import inspect, session
+from . import inspect, references, session
 
 END_CONDITIONS = {
     "blind": 0,
@@ -52,10 +53,11 @@ def _require_feature_result(doc, feature, operation: str) -> dict:
     return {"feature": str(binding.value(wrapped.Name))}
 
 
-def _rename(feature_name: str, new_name: str | None) -> None:
+def _rename(feature_name: str, new_name: str | None, doc=None) -> None:
     if not new_name:
         return
-    _, doc, _ = session.active_doc(("part",))
+    if doc is None:
+        _, doc, _ = session.active_doc(("part",))
     for feature in session.iter_features(doc):
         if str(binding.value(feature.Name)) == feature_name:
             try:
@@ -94,7 +96,7 @@ def _finish_feature(
         if newest is not None:
             result = {"feature": newest}
             if name:
-                _rename(newest, name)
+                _rename(newest, name, doc=doc)
                 result["feature"] = name
             rebuild = inspect.rebuild(doc)
             if rebuild["ok"] and not rebuild["whats_wrong"]["count"]:
@@ -107,7 +109,7 @@ def _finish_feature(
                 }
     result = _require_feature_result(doc, feature, operation)
     if name:
-        _rename(result["feature"], name)
+        _rename(result["feature"], name, doc=doc)
         result["feature"] = name
     rebuild = inspect.rebuild(doc)
     evidence = {"rebuild": rebuild, "mass_properties": inspect.mass_properties(doc)}
@@ -468,14 +470,34 @@ def create_reference_plane(
     axis_edge: int | None = None,
     flip: bool = False,
     name: str | None = None,
+    entity_ref: str | None = None,
 ) -> dict:
     _, doc, _ = session.active_doc(("part",))
+    if entity_ref is not None:
+        if (kind != "offset" or plane is not None or face_index is not None
+                or second_plane is not None or second_face_index is not None
+                or axis_edge is not None or angle_deg is not None or flip):
+            raise InvalidParameterError("entity_ref accepts only the fixed face-offset workflow")
+        if (not isinstance(distance_mm, (int, float)) or not math.isfinite(distance_mm)
+                or distance_mm == 0 or not isinstance(name, str) or not 1 <= len(name) <= 64):
+            raise InvalidParameterError("face offset needs a finite nonzero distance and a bounded name")
+        references.resolve_offset_face(doc, entity_ref)
+        if name in feature_names(doc):
+            raise InvalidParameterError("the requested feature name already exists")
     session.clear_selection(doc)
     flip_bit = PLANE_CONSTRAINTS["flip"] if flip else 0
     if kind == "offset":
         if distance_mm is None:
             raise InvalidParameterError("kind=offset needs distance_mm")
-        _select_plane_or_face(doc, plane, face_index, mark=0, append=False)
+        if entity_ref is not None:
+            # Re-resolve inside this same STA mutation job, immediately before
+            # selecting the reference used by InsertRefPlane. Never reuse a read index.
+            target = references.resolve_offset_face(doc, entity_ref)
+            data = inspect.create_select_data(doc, 0)
+            if not inspect.select_entity(target["entity"], False, mark=0, data=data):
+                raise SelectionError("could not select the revalidated planar face")
+        else:
+            _select_plane_or_face(doc, plane, face_index, mark=0, append=False)
         constraints = (
             PLANE_CONSTRAINTS["distance"] | flip_bit,
             units.mm_to_m(distance_mm),

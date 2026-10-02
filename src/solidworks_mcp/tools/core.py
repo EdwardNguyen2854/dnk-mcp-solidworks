@@ -289,24 +289,26 @@ def get_selection(args: dict) -> dict:
 @registry.tool(
     "resolve_entity_reference",
     "Revalidate an opaque selection reference; fail closed on missing or ambiguous identity.",
-    obj({"ref": string("opaque reference from get_selection")}, required=("ref",)),
+    obj({"ref": string("opaque reference from get_selection"),
+         "for_offset_plane": boolean("require unchanged planar-face geometry", default=False)}, required=("ref",)),
     tags=("inspect", "selection"),
 )
 def resolve_entity_reference(args: dict) -> dict:
-    return ok(run(lambda: references.resolve_entity_reference(args["ref"])))
+    return ok(run(lambda: references.resolve_entity_reference(args["ref"], args.get("for_offset_plane", False))))
 
 
 @registry.tool(
     "highlight_entities",
-    "Select referenced entities as visual feedback, not a preview. Legacy clear clears selection.",
+    "Append owner-scoped selection highlights, never replace engineer selection. Clear removes only this owner's entries; not a preview.",
     obj({
         "refs": array("references from get_selection", {"type": "string"}, default=[]),
-        "clear": boolean("clear selection", default=False),
-    }),
+        "clear": boolean("clear only this owner's highlight", default=False),
+        "owner": string("single-use review ownership token"),
+    }, required=("owner",)),
     tags=("selection",),
 )
 def highlight_entities(args: dict) -> dict:
-    return ok(run(lambda: references.highlight_entities(args.get("refs", []), args.get("clear", False))))
+    return ok(run(lambda: references.highlight_entities(args.get("refs", []), args.get("clear", False), args["owner"])))
 
 
 @registry.tool(
@@ -325,6 +327,7 @@ def highlight_entities(args: dict) -> dict:
             "face_index": integer(
                 "planar face index from list_faces as the base reference", default=None
             ),
+            "entity_ref": string("captured planar-face reference; revalidated inside the offset mutation", default=None),
             "second_plane": string("second plane for midplane", default=None),
             "second_face_index": integer(
                 "second planar face for midplane", default=None
@@ -353,6 +356,7 @@ def create_reference_plane(args: dict) -> dict:
             args.get("axis_edge"),
             args.get("flip", False),
             args.get("name"),
+            args.get("entity_ref"),
         )
     )
     return envelope(result)

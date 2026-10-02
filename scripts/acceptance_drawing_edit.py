@@ -20,7 +20,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sys
+import subprocess
 from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
@@ -121,7 +123,11 @@ async def test_drawing_edit(client: Client) -> None:
         first_angle=True,
     )
     check("drawing creates", created["ok"])
-    views = await client.data("drawing_insert_standard_views")
+    views = await client.data(
+        "drawing_insert_standard_views",
+        model_reference=str(PART),
+        configuration="Default",
+    )
     check("standard views insert", bool(views.get("views")))
 
     listed_views = await client.data("list_drawing_views")
@@ -198,11 +204,11 @@ async def test_drawing_edit(client: Client) -> None:
         "drawing_set_annotation_text",
         view=front["name"],
         index=diameter_index,
-        prefix="2x ",
+        prefix="2x <MOD-DIAM>",
     )
     check(
         "dimension prefix set",
-        prefixed.get("ok") and prefixed.get("data", {}).get("prefix") == "2x ",
+        prefixed.get("ok") and prefixed.get("data", {}).get("prefix") == "2x <MOD-DIAM>",
         json.dumps(prefixed.get("data", {})),
     )
     re_listed = await client.data("list_drawing_annotations", view=front["name"])
@@ -259,16 +265,61 @@ async def test_drawing_edit(client: Client) -> None:
             y_mm=210.0,
         )
         check("note moved", note_moved["ok"])
+
+        current_annotations = await client.data(
+            "list_drawing_annotations", view=note_view
+        )
+        current_note = next(
+            (
+                annotation
+                for view_item in current_annotations.get("views", [])
+                for annotation in view_item.get("annotations", [])
+                if annotation.get("text") == "EDITED"
+            ),
+            None,
+        )
+        current_id = current_note.get("id") if current_note else None
+        batch = await client.call(
+            "drawing_update_annotations",
+            updates=[
+                {
+                    "id": current_id,
+                    "text": "BATCHED GLYPHS: Ø10 90°",
+                    "height_mm": 4.2,
+                    "position_mm": [210.0, 210.0],
+                }
+            ],
+        )
+        check(
+            "typed annotation batch edits note text/height/position",
+            bool(current_id)
+            and batch.get("ok")
+            and batch.get("data", {}).get("annotations", [{}])[0].get("text")
+            == "BATCHED GLYPHS: Ø10 90°",
+            json.dumps(batch.get("data", {})),
+        )
+        stale_batch = await client.call(
+            "drawing_update_annotations",
+            updates=[{"id": current_id, "text": "STALE-ID MUST NOT APPLY"}],
+        )
+        _view, batched_note = await find_annotation(client, "BATCHED GLYPHS: Ø10 90°")
+        check(
+            "changed annotation invalidates its old batch ID",
+            bool(current_id) and not stale_batch.get("ok") and batched_note is not None,
+            json.dumps(stale_batch.get("error", {})),
+        )
+
         deleted_note = await client.call(
             "drawing_delete_annotation", view=note_view, index=note_index
         )
         check("note deleted", deleted_note["ok"], json.dumps(deleted_note.get("data", {})))
-        _view, gone = await find_annotation(client, "EDITED")
+        _view, gone = await find_annotation(client, "BATCHED GLYPHS: Ø10 90°")
         check("deleted note is gone from the listing", gone is None)
 
     # --- view deletion ----------------------------------------------------
     inserted = await client.data(
-        "drawing_insert_view", view="isometric", x_mm=330.0, y_mm=230.0
+        "drawing_insert_view", view="isometric", x_mm=330.0, y_mm=230.0,
+        model_reference=str(PART), configuration="Default"
     )
     extra_name = inserted.get("name")
     check("extra isometric view inserted", bool(extra_name), str(extra_name))
@@ -293,6 +344,47 @@ async def test_drawing_edit(client: Client) -> None:
     )
     check("out-of-range edge index is refused", not bad_index["ok"])
 
+    glyph_text = "GLYPH CHECK: Ø10, 90°"
+    await client.call(
+        "drawing_add_note", text=glyph_text, x_mm=170.0, y_mm=245.0
+    )
+    glyph_listing = await client.data("list_drawing_annotations")
+    glyph_readback = any(
+        annotation.get("resolved_text") == glyph_text
+        or annotation.get("text") == glyph_text
+        for view_item in glyph_listing.get("views", [])
+        for annotation in view_item.get("annotations", [])
+    )
+    check(
+        "SOLIDWORKS annotation data preserves diameter and degree glyphs",
+        glyph_readback,
+        glyph_text,
+    )
+
+    await client.call("drawing_move_annotation", view=front["name"],
+                      index=diameter_index, x_mm=330, y_mm=205)
+    arranged = await client.call("drawing_arrange_dimensions", view=front["name"])
+    check("dimensions are arranged after the final annotation", arranged.get("ok"))
+    centered = await client.call("drawing_move_annotation", view=front["name"],
+                                 index=distance_data.get("index"), x_mm=240, y_mm=106)
+    check("final centre-distance label is centred between its witness lines", centered.get("ok"))
+    listed_dimensions = await client.data("list_drawing_dimensions", view=front["name"])
+    ids = [item["id"] for view_item in listed_dimensions.get("views", [])
+           for item in view_item.get("dimensions", [])]
+    covered = await client.data("drawing_audit_feature_coverage",
+                                coverage=[{"feature_ref": "Body", "dimension_ids": ids}])
+    check("feature coverage resolves the referenced part feature tree",
+          covered.get("passed") is True and covered.get("model_reference", "").lower()
+          == str(PART).lower(), json.dumps(covered))
+    missing = await client.data("drawing_audit_feature_coverage",
+                                coverage=[{"feature_ref": "Body", "dimension_ids": []}])
+    check("missing feature dimension coverage is detected",
+          missing.get("passed") is False and "Body" in missing.get("missing_required_features", []))
+    duplicate = await client.data("drawing_audit_feature_coverage",
+                                  coverage=[{"feature_ref": "Body", "dimension_ids": ids + ids}])
+    check("duplicate dimension assignments are detected",
+          duplicate.get("passed") is False and bool(duplicate.get("duplicate_dimension_assignments")))
+
     # --- PDF export and structural verification ---------------------------
     pdf = OUTPUT / "plate.pdf"
     exported = await client.call("export_document", path=str(pdf))
@@ -305,6 +397,35 @@ async def test_drawing_edit(client: Client) -> None:
         and pdf_details.get("page_count") == 1
         and pdf_details.get("page_count_consistent") is True,
         json.dumps(pdf_details),
+    )
+    renderer = shutil.which("pdftoppm")
+    raster = OUTPUT / "plate-glyph-review.png"
+    rendered = False
+    if renderer and pdf.is_file():
+        prefix = raster.with_suffix("")
+        result = subprocess.run(
+            [
+                renderer,
+                "-f", "1",
+                "-l", "1",
+                "-singlefile",
+                "-png",
+                "-r", "120",
+                str(pdf),
+                str(prefix),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        rendered = result.returncode == 0 and raster.is_file()
+        detail = str(raster) if rendered else (result.stderr or result.stdout)
+    else:
+        detail = "pdftoppm or the PDF is unavailable; run a full-sheet raster review"
+    check(
+        "PDF page raster is available for visual Ø/degree-glyph review",
+        rendered,
+        detail,
     )
 
     await client.call("close_document", save=False)

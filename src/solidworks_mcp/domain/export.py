@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import base64
+import os
 import time
+from io import BytesIO
 from pathlib import Path
 
 from ..com import binding
 from ..config import get_config
-from ..errors import ComCallError, InvalidParameterError, PathNotFoundError
+from ..errors import (
+    ComCallError,
+    InvalidParameterError,
+    PathNotFoundError,
+)
 from . import artifacts, session
 
 EXPORT_FORMATS = {
@@ -27,6 +33,26 @@ EXPORT_FORMATS = {
     "bmp": ".bmp",
     "tif": ".tif",
 }
+
+MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
+MAX_REFERENCE_IMAGE_PIXELS = 24_000_000
+
+
+def _is_network_path(path: str) -> bool:
+    if path.startswith(("\\\\", "//")):
+        return True
+    candidate = Path(path)
+    if os.name != "nt" or not candidate.is_absolute() or not candidate.drive:
+        return False
+    try:
+        import ctypes
+
+        drive_type = ctypes.windll.kernel32.GetDriveTypeW(
+            f"{candidate.drive}\\"
+        )
+    except (AttributeError, OSError):
+        return True
+    return drive_type in {0, 1, 4}
 
 
 def export_document(path: str, file_format: str | None = None) -> dict:
@@ -102,4 +128,115 @@ def capture_screenshot(
         "path": str(target),
         "size_bytes": target.stat().st_size,
         "_images": [{"data": data, "mime": mime}],
+    }
+
+
+def view_reference_image(path: str) -> dict:
+    """Read a local PNG/JPEG and return it as MCP image content.
+
+    Absolute paths follow the existing read policy for CAD documents; relative
+    paths resolve under the configured output root. The image is decoded,
+    orientation-corrected, and re-encoded to strip metadata before it is
+    presented to the MCP client.
+    """
+    if _is_network_path(path):
+        raise InvalidParameterError(
+            "network image paths are not supported",
+            hint="Use an image stored on a local drive.",
+        )
+    target = Path(path).expanduser()
+    if target.is_absolute():
+        target = target.resolve()
+    else:
+        target = get_config().resolve_output_path(path, must_exist=True)
+    if _is_network_path(str(target)):
+        raise InvalidParameterError(
+            "network image paths are not supported",
+            hint="Use an image stored on a local drive.",
+        )
+    try:
+        if not target.is_file():
+            raise PathNotFoundError(f"reference image does not exist: {target}")
+        with target.open("rb") as stream:
+            source_bytes = stream.read(MAX_REFERENCE_IMAGE_BYTES + 1)
+    except OSError as exc:
+        raise PathNotFoundError(
+            f"could not read reference image: {target}",
+            hint="Check that the path exists and is readable.",
+        ) from exc
+
+    if len(source_bytes) > MAX_REFERENCE_IMAGE_BYTES:
+        raise InvalidParameterError(
+            f"reference image exceeds the {MAX_REFERENCE_IMAGE_BYTES}-byte limit",
+            hint="Use a smaller PNG/JPEG or reduce its resolution before retrying.",
+            max_bytes=MAX_REFERENCE_IMAGE_BYTES,
+        )
+
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        with Image.open(BytesIO(source_bytes)) as source:
+            source_format = source.format
+            if source_format not in {"PNG", "JPEG"}:
+                raise InvalidParameterError(
+                    f"unsupported reference image format: {source_format or 'unknown'}",
+                    hint="Use a PNG or JPEG image.",
+                    available=["PNG", "JPEG"],
+                )
+            if source.width * source.height > MAX_REFERENCE_IMAGE_PIXELS:
+                raise InvalidParameterError(
+                    "reference image exceeds the pixel limit",
+                    hint="Reduce the image resolution before retrying.",
+                    max_pixels=MAX_REFERENCE_IMAGE_PIXELS,
+                    width_px=source.width,
+                    height_px=source.height,
+                )
+            source.load()
+            image = ImageOps.exif_transpose(source)
+            has_alpha = "A" in image.getbands() or "transparency" in image.info
+            image = image.convert("RGBA" if has_alpha else "RGB")
+            output_format = "PNG" if source_format == "PNG" else "JPEG"
+            output = BytesIO()
+            save_options = (
+                {"optimize": True}
+                if output_format == "PNG"
+                else {"quality": 95, "optimize": True}
+            )
+            image.save(output, format=output_format, **save_options)
+    except InvalidParameterError:
+        raise
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise InvalidParameterError(
+            "could not decode the reference image",
+            hint="Provide a valid PNG or JPEG image and retry.",
+        ) from exc
+
+    image_bytes = output.getvalue()
+    if len(image_bytes) > MAX_REFERENCE_IMAGE_BYTES:
+        raise InvalidParameterError(
+            "normalized reference image exceeds the MCP image-content size limit",
+            hint="Reduce the image resolution before retrying.",
+            max_bytes=MAX_REFERENCE_IMAGE_BYTES,
+        )
+
+    mime = "image/png" if output_format == "PNG" else "image/jpeg"
+    return {
+        "data": {
+            "path": str(target.resolve()),
+            "format": output_format.lower(),
+            "width_px": image.width,
+            "height_px": image.height,
+            "source_size_bytes": len(source_bytes),
+            "content_size_bytes": len(image_bytes),
+        },
+        "evidence": {
+            "input_format": source_format.lower(),
+            "orientation_corrected": True,
+            "metadata_stripped": True,
+            "ocr_performed": False,
+            "geometry_extraction_performed": False,
+        },
+        "_images": [
+            {"data": base64.b64encode(image_bytes).decode("ascii"), "mime": mime}
+        ],
     }

@@ -7,6 +7,17 @@ def annotation(kind, position, **extra):
     return base
 
 
+def test_duplicate_template_notes_require_matching_text_and_position():
+    result = audit.audit_annotations([{"name": "Sheet1", "annotations": [
+        annotation("note", [250, 40], text="MATERIAL:", index=0),
+        annotation("note", [250, 40], text="MATERIAL:", index=1),
+        annotation("note", [20, 100], text="A", index=2),
+        annotation("note", [400, 100], text="A", index=3),
+    ]}], [420, 297])
+    assert result["counts"]["duplicate_note_groups"] == 1
+    assert result["duplicate_notes"][0]["text"] == "MATERIAL:"
+
+
 def test_datum_tag_size_is_a_small_box():
     width, height = audit.estimate_size_mm(
         annotation("datum_tag", [100, 100], label="A"), 3.5
@@ -106,15 +117,53 @@ def test_audit_flags_off_frame_items():
     assert result["off_frame"][0]["sides"] == ["left"]
 
 
-def test_audit_skips_margin_decoration_by_default():
+def test_audit_skips_margin_decoration_only_when_requested():
     views = [
         {"name": "Sheet1", "annotations": [annotation("note", [30.0, 8.0], text="8")]},
     ]
 
-    result = audit.audit_annotations(views, [420.0, 297.0])
+    result = audit.audit_annotations(views, [420.0, 297.0], edge_band_mm=12.0)
 
     assert result["counts"]["items"] == 0
     assert result["counts"]["skipped"]["frame_decoration"] == 1
+
+
+def test_default_audit_includes_title_block_and_frame_notes():
+    views = [
+        {
+            "name": "Sheet1",
+            "annotations": [
+                annotation("note", [300.0, 40.0], text="TITLE"),
+                annotation("note", [30.0, 8.0], text="ZONE 8"),
+            ],
+        }
+    ]
+
+    result = audit.audit_annotations(views, [420.0, 297.0])
+
+    assert result["counts"]["items"] == 2
+    assert result["counts"]["skipped"] == {"frame_decoration": 0, "title_block": 0}
+
+
+def test_linked_title_block_note_overflow_is_reported():
+    views = [
+        {
+            "name": "Sheet1",
+            "annotations": [
+                annotation(
+                    "note",
+                    [410.0, 294.0],
+                    text="DRAWING TITLE THAT CANNOT FIT IN THE CELL",
+                    property_linked_text='$PRP:"Title"',
+                )
+            ],
+        }
+    ]
+
+    result = audit.audit_annotations(views, [420.0, 297.0])
+
+    assert result["counts"]["off_frame"] == 1
+    assert result["off_frame"][0]["sides"] == ["right", "top"]
 
 
 def test_audit_skips_the_title_block_region():

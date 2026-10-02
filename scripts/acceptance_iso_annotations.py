@@ -93,7 +93,9 @@ async def test_tolerances(client: Client) -> None:
 
     result = await client.call("new_drawing", model=block)
     check("new drawing for tolerance tooling", result["ok"], "")
-    views = await client.call("drawing_insert_standard_views", model=block)
+    views = await client.call(
+        "drawing_insert_standard_views", model_reference=block, configuration="Default"
+    )
     check("standard view set inserted", views["ok"], "")
     data = views.get("data", {})
     layout = data.get("layout", {})
@@ -210,7 +212,9 @@ async def test_tolerances(client: Client) -> None:
     await client.call("open_document", path=plate)
     result = await client.call("new_drawing", model=plate)
     check("new drawing for fit tolerance", result["ok"], "")
-    await client.call("drawing_insert_standard_views", model=plate)
+    await client.call(
+        "drawing_insert_standard_views", model_reference=plate, configuration="Default"
+    )
     result = await client.call("drawing_auto_dimension")
     check("auto dimension on holed plate", result["ok"], json.dumps(result.get("data")))
     listing = await client.call("list_drawing_dimensions")
@@ -263,7 +267,7 @@ async def test_tolerances(client: Client) -> None:
         )
         note = await client.call(
             "drawing_add_note",
-            text="UNLESS OTHERWISE SPECIFIED: GENERAL TOLERANCES ISO 2768-mK",
+            text="REVIEW ONLY: GENERAL TOLERANCES UNCONFIRMED",
             x_mm=20,
             y_mm=15,
         )
@@ -336,7 +340,9 @@ async def test_datums_gdt(client: Client) -> None:
     await client.call("open_document", path=part)
     result = await client.call("new_drawing", model=part)
     check("new drawing for datums and GD&T", result["ok"], "")
-    views = await client.call("drawing_insert_standard_views", model=part)
+    views = await client.call(
+        "drawing_insert_standard_views", model_reference=part, configuration="Default"
+    )
     check("standard views for datums and GD&T", views["ok"], "")
     view_name = (views.get("data", {}).get("views") or {}).get("front")
 
@@ -438,7 +444,9 @@ async def test_surface_finish(client: Client) -> None:
     await client.call("open_document", path=part)
     result = await client.call("new_drawing", model=part)
     check("new drawing for surface finish", result["ok"], "")
-    views = await client.call("drawing_insert_standard_views", model=part)
+    views = await client.call(
+        "drawing_insert_standard_views", model_reference=part, configuration="Default"
+    )
     view_name = (views.get("data", {}).get("views") or {}).get("front")
     edges = await client.call("list_drawing_view_edges", view=view_name)
     edge_list = [
@@ -493,7 +501,9 @@ async def test_revision_table(client: Client) -> None:
     await client.call("open_document", path=part)
     result = await client.call("new_drawing", model=part)
     check("new drawing for the revision table", result["ok"], "")
-    await client.call("drawing_insert_standard_views", model=part)
+    await client.call(
+        "drawing_insert_standard_views", model_reference=part, configuration="Default"
+    )
 
     table = await client.call("drawing_insert_revision_table")
     titles = table.get("data", {}).get("column_titles", [])
@@ -561,7 +571,8 @@ async def test_bom_balloons(client: Client) -> None:
     result = await client.call("new_drawing", model=assembly)
     check("new assembly drawing", result["ok"], "")
     view = await client.call(
-        "drawing_insert_view", view="front", x_mm=200, y_mm=160, model=assembly
+        "drawing_insert_view", view="front", x_mm=200, y_mm=160,
+        model_reference=assembly, configuration="Default"
     )
     check("assembly drawing view inserted", view["ok"], json.dumps(view.get("data")))
     view_name = view.get("data", {}).get("name")
@@ -618,7 +629,9 @@ async def test_hole_callout(client: Client) -> None:
     )
     result = await client.call("new_drawing", model=part)
     check("new drawing for the hole callout", result["ok"], "")
-    views = await client.call("drawing_insert_standard_views", model=part)
+    views = await client.call(
+        "drawing_insert_standard_views", model_reference=part, configuration="Default"
+    )
     view_name = (views.get("data", {}).get("views") or {}).get("front")
     edges = await client.call("list_drawing_view_edges", view=view_name)
     edge_list = [

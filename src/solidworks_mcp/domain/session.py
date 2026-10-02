@@ -56,12 +56,26 @@ def active_doc(kind: str | tuple[str, ...] | None = None):
 
 
 def doc_info(doc) -> dict:
-    return {
+    info = {
         "title": str(binding.value(doc.GetTitle)),
         "path": str(binding.value(doc.GetPathName)),
         "type": DOC_TYPES.get(int(doc.GetType()), "unknown"),
         "dirty": bool(binding.value(doc.GetSaveFlag)),
     }
+    if info["type"] in ("part", "assembly"):
+        try:
+            manager = binding.wrap(doc.ConfigurationManager, "IConfigurationManager")
+            active = binding.wrap(manager.ActiveConfiguration, "IConfiguration")
+            info["active_configuration"] = str(binding.value(active.Name) or "")
+        except Exception:
+            pass
+        try:
+            info["configurations"] = [
+                str(name) for name in binding.value(doc.GetConfigurationNames()) or []
+            ]
+        except Exception:
+            pass
+    return info
 
 
 def iter_features(doc) -> Iterator:

@@ -84,6 +84,30 @@ class SelectionError(SwMcpError):
     recoverable = True
 
 
+class ReferenceNotFoundError(SwMcpError):
+    """The referenced entity no longer exists or cannot be matched."""
+
+    code = "REFERENCE_NOT_FOUND"
+    recoverable = True
+    hint = "Ask the engineer to re-select the entity."
+
+
+class ReferenceAmbiguousError(SwMcpError):
+    """More than one current entity matches the reference."""
+
+    code = "REFERENCE_AMBIGUOUS"
+    recoverable = True
+    hint = "The reference cannot be resolved to one entity; re-select it."
+
+
+class ReferenceDocumentMismatchError(SwMcpError):
+    """The reference belongs to a different document than the active one."""
+
+    code = "REFERENCE_DOCUMENT_MISMATCH"
+    recoverable = True
+    hint = "Activate the document the reference was captured in."
+
+
 class FeatureBuildError(SwMcpError):
     code = "FEATURE_FAILED"
     recoverable = True

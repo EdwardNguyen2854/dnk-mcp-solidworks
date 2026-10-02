@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sysconfig
 from pathlib import Path
 
 from .errors import PathNotFoundError
@@ -23,6 +24,12 @@ def _skills_root() -> Path | None:
     repo_root = Path(__file__).resolve().parents[2]
     candidates.append(repo_root / "skills")
     candidates.append(Path(__file__).resolve().parent / "skills")
+    candidates.append(
+        Path(sysconfig.get_path("data"))
+        / "share"
+        / "solidworks-mcp-core"
+        / "skills"
+    )
     for candidate in candidates:
         if candidate.is_dir() and any(candidate.glob("*/SKILL.md")):
             return candidate

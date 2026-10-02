@@ -46,7 +46,7 @@ def profile_info() -> dict[str, Any]:
         "limitations": [
             "stock ISO sheet frames are available; custom sheet artwork is not "
             "verified on the target SOLIDWORKS build",
-            "model-item annotation import is not reliable on SW2026 SP0.0",
+            "model-item annotation import requires before/after inventory verification",
             "auto-dimensions require design-intent review before release",
         ],
     }

@@ -44,14 +44,23 @@ async def main() -> int:
             await session.initialize()
 
             await call(session, "get_status")
-            await call(session, "get_active_document_info")
+            active = await call(session, "get_active_document_info")
+            document = (active.get("data") or {}).get("document") or {}
+            model_reference = document.get("path") or document.get("title")
+            configuration = document.get("active_configuration")
+            if not model_reference or not configuration:
+                raise RuntimeError(
+                    "an active part/assembly with a readable configuration is required"
+                )
 
             for name, args in [
                 ("new_drawing", {}),
                 ("list_drawing_sheets", {}),
                 ("list_drawing_views", {}),
-                ("drawing_insert_view", {"view": "isometric", "x_mm": 220, "y_mm": 180}),
-                ("drawing_insert_standard_views", {}),
+                ("drawing_insert_view", {"view": "isometric", "x_mm": 220, "y_mm": 180,
+                  "model_reference": model_reference, "configuration": configuration}),
+                ("drawing_insert_standard_views", {"model_reference": model_reference,
+                  "configuration": configuration}),
                 ("list_drawing_views", {}),
                 ("drawing_auto_dimension", {"view": "Drawing View1"}),
                 ("capture_screenshot", {"path": "drawing.png"}),

@@ -78,7 +78,11 @@ def main() -> int:
     created: list[str] = []
 
     documents.new_document("part")
-    part_title = str(binding.value(session.active_doc(("part",))[1].GetTitle))
+    part_doc = session.active_doc(("part",))[1]
+    part_info = session.doc_info(part_doc)
+    part_title = part_info["title"]
+    model_reference = part_info.get("path") or part_title
+    configuration = part_info.get("active_configuration") or "Default"
     created.append(part_title)
     sketch.create_sketch("Front Plane")
     sketch.rectangle(0.0, 0.0, 120.0, 80.0)
@@ -90,7 +94,7 @@ def main() -> int:
     drawings.create_drawing(paper_size="A3", scale=1.0, first_angle=True)
     doc = session.active_doc(("drawing",))[1]
     created.insert(0, str(binding.value(doc.GetTitle)))
-    drawings.insert_standard_views()
+    drawings.insert_standard_views(model_reference, configuration)
     extension = doc.Extension
 
     def make_note(text: str, x_mm: float, y_mm: float):

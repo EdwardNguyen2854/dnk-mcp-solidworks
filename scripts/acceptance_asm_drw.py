@@ -218,7 +218,9 @@ async def test_drawing(client: Client) -> None:
         result.get("data", {}).get("units", {}).get("metric") is True,
         json.dumps(result.get("data", {}).get("units")),
     )
-    result = await client.call("drawing_insert_standard_views", model=part_a)
+    result = await client.call(
+        "drawing_insert_standard_views", model_reference=part_a, configuration="Default"
+    )
     check("insert standard views", result["ok"], json.dumps(result.get("data")))
     views = await client.call("list_drawing_views")
     count = views.get("data", {}).get("count", 0)
@@ -276,7 +278,9 @@ async def test_drawing_annotations(client: Client) -> None:
     check("open dimensioned part", opened["ok"], "")
     result = await client.call("new_drawing", model=part)
     check("new dimensioned drawing", result["ok"], "")
-    result = await client.call("drawing_insert_standard_views", model=part)
+    result = await client.call(
+        "drawing_insert_standard_views", model_reference=part, configuration="Default"
+    )
     check("views for annotation", result["ok"], json.dumps(result.get("data")))
 
     result = await client.call("drawing_auto_dimension")
@@ -462,9 +466,11 @@ async def test_drawing_tools(client: Client) -> None:
 
     result = await client.call("new_drawing", model=plate)
     check("new drawing for view tools", result["ok"], "")
-    # One view only: the projected-view API works once per drawing on this build.
+    # Insert one master; projected companions must be created before a second
+    # sheet is added and must name this same master explicitly.
     result = await client.call(
-        "drawing_insert_view", view="front", x_mm=120, y_mm=160, model=plate
+        "drawing_insert_view", view="front", x_mm=120, y_mm=160,
+        model_reference=plate, configuration="Default"
     )
     check("single front view", result["ok"], json.dumps(result.get("data")))
 
@@ -495,6 +501,22 @@ async def test_drawing_tools(client: Client) -> None:
         and base_scale > 0,
         json.dumps({k: front.get(k) for k in ("type", "position_mm", "scale")}),
     )
+    check(
+        "view keeps the explicitly requested model reference",
+        str(front.get("model_reference", "")).casefold() == plate.casefold(),
+        json.dumps({"requested": plate, "view": front.get("model_reference")}),
+    )
+
+    mode = await client.call(
+        "drawing_set_view", name=front_name, display_mode="hidden_lines_grayed"
+    )
+    check(
+        "display mode uses the measured swDisplayMode_e read-back",
+        mode.get("ok")
+        and mode.get("data", {}).get("view", {}).get("display_mode")
+        == "hidden_lines_grayed",
+        json.dumps(mode.get("data", {}).get("view", {})),
+    )
 
     result = await client.call("drawing_activate_view", name=front_name)
     check(
@@ -518,21 +540,63 @@ async def test_drawing_tools(client: Client) -> None:
         f"1:2 width {width_at_half:.2f}, padding {padding:.2f}",
     )
 
-    # Projections only work on a single-sheet drawing (measured quirk), so
-    # this check runs before the second sheet is added.
+    # First-angle places the right-side view to the left of the front master.
     projection = await client.call(
         "drawing_insert_projected_view",
         parent_view=front_name,
-        direction="right",
+        direction="left",
         offset_mm=80,
     )
+    projection_data = projection.get("data", {})
+    projected_view = projection_data.get("view", {})
     check(
-        "projected view created to the right",
+        "first-angle right-side projection is placed left of master",
         projection["ok"]
-        and projection["data"]["view"]["type"] == "projected"
-        and abs(projection["data"]["position_mm"][0] - 200) < 0.01
-        and abs(projection["data"]["position_mm"][1] - 160) < 0.01,
-        json.dumps(projection.get("data")),
+        and projection_data.get("parent") == front_name
+        and projected_view.get("type") == "projected"
+        and projected_view.get("orientation") in (None, "right")
+        and str(projected_view.get("model_reference", "")).casefold()
+        == plate.casefold()
+        and str(projected_view.get("configuration", "")).casefold()
+        == "default"
+        and abs(projected_view.get("position_mm", [0, 0])[0] - 40) < 0.01
+        and abs(projected_view.get("position_mm", [0, 0])[1] - 160) < 0.01,
+        json.dumps(projection_data),
+    )
+
+    # The top view is a second projection from the same master, below it in
+    # first-angle projection. This also guards multiple projections per sheet.
+    top_projection = await client.call(
+        "drawing_insert_projected_view",
+        parent_view=front_name,
+        direction="down",
+        offset_mm=80,
+    )
+    top_projection_data = top_projection.get("data", {})
+    top_view = top_projection_data.get("view", {})
+    check(
+        "top projection is below and derived from the same master",
+        top_projection["ok"]
+        and top_projection_data.get("parent") == front_name
+        and top_view.get("type") == "projected"
+        and top_view.get("orientation") in (None, "top")
+        and str(top_view.get("model_reference", "")).casefold() == plate.casefold()
+        and str(top_view.get("configuration", "")).casefold() == "default"
+        and abs(top_view.get("position_mm", [0, 0])[0] - 120) < 0.01
+        and abs(top_view.get("position_mm", [0, 0])[1] - 80) < 0.01,
+        json.dumps(top_projection_data),
+    )
+
+    projected_views = await client.call("list_drawing_views")
+    projected_model_views = [
+        view
+        for view in projected_views.get("data", {}).get("views", [])
+        if view.get("type") == "projected"
+    ]
+    check(
+        "one master now has two projected companions",
+        projected_views.get("ok") and len(projected_model_views) == 2,
+        json.dumps(projected_model_views),
     )
 
     front_x, front_y = front["position_mm"]

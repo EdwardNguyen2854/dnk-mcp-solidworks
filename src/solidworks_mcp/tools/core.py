@@ -6,11 +6,21 @@ from typing import Any
 from .. import capabilities as capabilities_module
 from .. import registry
 from ..com.worker import run
-from ..domain import documents, export, features, inspect, session, sketch
+from ..domain import documents, export, features, inspect, references, session, sketch
 from ..errors import ok
 from ..registry import array, boolean, integer, number, obj, string
 
-END_CONDITIONS = ["blind", "through_all", "through_all_both", "up_to_next", "mid_plane"]
+END_CONDITIONS = [
+    "blind",
+    "through_all",
+    "through_all_both",
+    "up_to_next",
+    "mid_plane",
+    "up_to_surface",
+    "offset_from_surface",
+    "up_to_vertex",
+    "up_to_body",
+]
 
 
 def envelope(result: Any) -> dict[str, Any]:
@@ -203,6 +213,23 @@ def capture_screenshot(args: dict) -> dict:
 
 
 @registry.tool(
+    "view_reference_image",
+    "Read a local PNG/JPEG and return it as MCP image content with pixel "
+    "metadata. This presents the reference to the agent; it does not perform "
+    "OCR, tracing, scale calibration or CAD reconstruction. Absolute read "
+    "paths are not sandboxed; relative paths use the output sandbox. UNC paths "
+    "are rejected and input size/resolution are bounded.",
+    obj(
+        {"path": string("absolute or output-root-relative PNG/JPEG path")},
+        required=("path",),
+    ),
+    tags=("image", "reference", "input"),
+)
+def view_reference_image(args: dict) -> dict:
+    return envelope(export.view_reference_image(args["path"]))
+
+
+@registry.tool(
     "export_document",
     "Export the active document. Formats: step, iges, stl, 3mf, parasolid, "
     "pdf, dxf, dwg, png, jpg, bmp, tif.",
@@ -243,22 +270,80 @@ def list_features(args: dict) -> dict:
 
 @registry.tool(
     "get_mass_properties",
-    "Measured volume, mass, density, surface area and centre of mass.",
-    obj({}),
+    "Measured volume, mass, density, surface area and centre of mass. "
+    "Accuracy may be standard or maximum; maximum reports the SOLIDWORKS "
+    "status returned by GetMassProperties2.",
+    obj(
+        {
+            "accuracy": string(
+                "mass-property accuracy", enum=sorted(inspect.MASS_PROPERTY_ACCURACY),
+                default="standard",
+            )
+        }
+    ),
     tags=("inspect",),
 )
 def get_mass_properties(args: dict) -> dict:
-    return ok(run(inspect.mass_properties))
+    return ok(run(lambda: inspect.mass_properties(accuracy=args.get("accuracy", "standard"))))
 
 
 @registry.tool(
     "get_bounding_box",
-    "Tight bounding box of a part in model coordinates, in millimetres.",
+    "Exact body extrema in model coordinates, in millimetres, measured with "
+    "IBody2.GetExtremePoint.",
     obj({}),
     tags=("inspect",),
 )
 def get_bounding_box(args: dict) -> dict:
     return ok(run(inspect.bounding_box))
+
+
+@registry.tool(
+    "compare_model_geometry",
+    "Compare the active part with one other already-open part. Caller-supplied "
+    "volume, exact-extrema, and sampled surface-deviation tolerances are "
+    "required; topology is returned as evidence and does not silently decide "
+    "the tolerance result.",
+    obj(
+        {
+            "reference_model": string("exact open model path or unique title"),
+            "volume_tolerance_mm3": number("maximum absolute volume difference (mm^3)", exclusiveMinimum=0),
+            "extrema_tolerance_mm": number("maximum absolute difference at any exact axis extremum (mm)", exclusiveMinimum=0),
+            "surface_tolerance_mm": number("maximum bidirectional sampled tessellation deviation (mm)", exclusiveMinimum=0),
+        },
+        required=(
+            "reference_model",
+            "volume_tolerance_mm3",
+            "extrema_tolerance_mm",
+            "surface_tolerance_mm",
+        ),
+    ),
+    tags=("inspect", "geometry", "compare"),
+)
+def compare_model_geometry(args: dict) -> dict:
+    return envelope(
+        run(
+            lambda: inspect.compare_model_geometry(
+                args["reference_model"],
+                args["volume_tolerance_mm3"],
+                args["extrema_tolerance_mm"],
+                args["surface_tolerance_mm"],
+            )
+        )
+    )
+
+
+@registry.tool(
+    "inspect_editable_features",
+    "Inspect the active part feature tree and read the two directional depth "
+    "parameters exposed for extrude and cut definitions on the verified "
+    "SOLIDWORKS typelib. Unsupported feature definitions are reported as "
+    "unavailable instead of guessed.",
+    obj({}),
+    tags=("inspect", "features", "diagnostics"),
+)
+def inspect_editable_features(args: dict) -> dict:
+    return ok(run(inspect.editable_feature_diagnostics))
 
 
 @registry.tool(
@@ -274,6 +359,58 @@ def check_errors(args: dict) -> dict:
         return inspect.whats_wrong(doc)
 
     return ok(run(job))
+
+
+@registry.tool(
+    "get_selection",
+    "Read the engineer's current SOLIDWORKS selection as bounded entity "
+    "references: an opaque ref, a kind, a human label, and measurements. "
+    "Read-only; it samples the live selection on demand and never streams it. "
+    "Datum treats the ref as opaque and passes it back to "
+    "resolve_entity_reference or highlight_entities.",
+    obj({}),
+    tags=("inspect", "selection"),
+)
+def get_selection(args: dict) -> dict:
+    return ok(run(references.capture_selection))
+
+
+@registry.tool(
+    "resolve_entity_reference",
+    "Revalidate an entity reference captured by get_selection against the "
+    "active document. Prefers the stored SOLIDWORKS persist reference and falls "
+    "back to a unique geometric fingerprint; fails explicitly when the entity "
+    "is gone (REFERENCE_NOT_FOUND), matches more than one entity "
+    "(REFERENCE_AMBIGUOUS), or belongs to another document "
+    "(REFERENCE_DOCUMENT_MISMATCH). Never resolves to a guessed entity. Returns "
+    "the current index, details, and a refreshed reference.",
+    obj({"ref": string("opaque reference from get_selection")}, required=("ref",)),
+    tags=("inspect", "selection"),
+)
+def resolve_entity_reference(args: dict) -> dict:
+    return ok(run(lambda: references.resolve_entity_reference(args["ref"])))
+
+
+@registry.tool(
+    "highlight_entities",
+    "Transiently select referenced entities in the SOLIDWORKS viewport so the "
+    "engineer can see them. A view action: it changes no geometry and is not a "
+    "preview. With clear=true it clears the selection instead. References are "
+    "revalidated first, so a stale reference fails explicitly.",
+    obj(
+        {
+            "refs": array(
+                "references from get_selection", {"type": "string"}, default=[]
+            ),
+            "clear": boolean("clear the selection instead of highlighting", default=False),
+        }
+    ),
+    tags=("selection",),
+)
+def highlight_entities(args: dict) -> dict:
+    return ok(
+        run(lambda: references.highlight_entities(args.get("refs", []), args.get("clear", False)))
+    )
 
 
 @registry.tool(
@@ -756,6 +893,27 @@ def _extrude_schema() -> dict[str, Any]:
         "draft_deg": number("draft angle (degrees)", default=0),
         "reverse": boolean("flip the direction", default=False),
         "both_directions": boolean("symmetric in both directions", default=False),
+        "offset_mm": number(
+            "end offset in mm for offset_from_surface; negative pulls the end "
+            "back toward the sketch",
+            default=None,
+        ),
+        "plane": string(
+            "reference plane for up_to_surface / offset_from_surface",
+            default=None,
+        ),
+        "face_index": integer(
+            "reference face index (from list_faces) for up_to_surface / "
+            "offset_from_surface",
+            default=None,
+        ),
+        "body_index": integer(
+            "reference body index (from list_bodies) for up_to_body", default=None
+        ),
+        "vertex_index": integer(
+            "reference vertex index (from list_vertices) for up_to_vertex",
+            default=None,
+        ),
         "name": string("feature name override", default=None),
     }
 
@@ -763,19 +921,27 @@ def _extrude_schema() -> dict[str, Any]:
 @registry.tool(
     "boss_extrude",
     "Extrude the sketch shown on screen as a boss. The last-created or "
-    "just-closed sketch is used; exit_sketch first is recommended.",
-    obj(_extrude_schema()),
+    "just-closed sketch is used; exit_sketch first is recommended. For "
+    "up_to_surface/offset_from_surface pass a plane or face_index, for "
+    "up_to_body a body_index, for up_to_vertex a vertex_index.",
+    obj(_extrude_schema() | {"merge": boolean("merge into existing bodies", default=True)}),
     tags=("features",),
 )
 def boss_extrude(args: dict) -> dict:
     result = run(
         lambda: features.boss_extrude(
-            args.get("depth_mm"),
-            args.get("end_condition", "blind"),
-            args.get("draft_deg", 0),
-            args.get("reverse", False),
-            args.get("both_directions", False),
-            args.get("name"),
+            depth_mm=args.get("depth_mm"),
+            end_condition=args.get("end_condition", "blind"),
+            draft_deg=args.get("draft_deg", 0),
+            reverse=args.get("reverse", False),
+            both_directions=args.get("both_directions", False),
+            name=args.get("name"),
+            offset_mm=args.get("offset_mm"),
+            plane=args.get("plane"),
+            face_index=args.get("face_index"),
+            body_index=args.get("body_index"),
+            vertex_index=args.get("vertex_index"),
+            merge=args.get("merge", True),
         )
     )
     return envelope(result)
@@ -785,7 +951,9 @@ def boss_extrude(args: dict) -> dict:
     "cut_extrude",
     "Cut-extrude the sketch shown on screen. through_all_both is translated "
     "internally to a two-direction through-all cut. If the requested direction "
-    "removes nothing, the other direction is tried automatically.",
+    "removes nothing, the other direction is tried automatically. The "
+    "up_to_* end conditions take a plane/face_index, body_index or "
+    "vertex_index reference.",
     obj(
         {
             **_extrude_schema(),
@@ -800,14 +968,19 @@ def boss_extrude(args: dict) -> dict:
 def cut_extrude(args: dict) -> dict:
     result = run(
         lambda: features.cut_extrude(
-            args.get("depth_mm"),
-            args.get("end_condition", "blind"),
-            args.get("draft_deg", 0),
-            args.get("reverse", False),
-            args.get("both_directions", False),
-            args.get("normal_cut", False),
-            args.get("flip_side", False),
-            args.get("name"),
+            depth_mm=args.get("depth_mm"),
+            end_condition=args.get("end_condition", "blind"),
+            draft_deg=args.get("draft_deg", 0),
+            reverse=args.get("reverse", False),
+            both_directions=args.get("both_directions", False),
+            normal_cut=args.get("normal_cut", False),
+            flip_side=args.get("flip_side", False),
+            name=args.get("name"),
+            offset_mm=args.get("offset_mm"),
+            plane=args.get("plane"),
+            face_index=args.get("face_index"),
+            body_index=args.get("body_index"),
+            vertex_index=args.get("vertex_index"),
         )
     )
     return envelope(result)
@@ -829,6 +1002,30 @@ def cut_extrude(args: dict) -> dict:
 def revolve(args: dict) -> dict:
     result = run(
         lambda: features.revolve(
+            args.get("angle_deg", 360),
+            args.get("reverse", False),
+            args.get("name"),
+        )
+    )
+    return envelope(result)
+
+
+@registry.tool(
+    "revolve_cut",
+    "Revolve-cut the sketch shown on screen around its centerline (or a "
+    "selected axis). Use a construction line as the axis.",
+    obj(
+        {
+            "angle_deg": number("revolution angle (degrees)", default=360),
+            "reverse": boolean("flip the direction", default=False),
+            "name": string("feature name override", default=None),
+        }
+    ),
+    tags=("features",),
+)
+def revolve_cut(args: dict) -> dict:
+    result = run(
+        lambda: features.revolve_cut(
             args.get("angle_deg", 360),
             args.get("reverse", False),
             args.get("name"),

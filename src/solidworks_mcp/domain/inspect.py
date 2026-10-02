@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from ..com import binding, units
-from ..errors import ComCallError, SelectionError
+import math
+
+from ..errors import ComCallError, InvalidParameterError, SelectionError
 from . import session
 
 BODY_TYPES = {"solid": 0, "sheet": 1, "wire": 2, "all": -1}
@@ -181,16 +183,51 @@ def _curve_name(edge) -> str:
 
 def edge_details(edge) -> dict:
     details = {"curve": _curve_name(edge)}
+    if details["curve"] == "circle":
+        try:
+            curve = binding.wrap(edge.GetCurve(), "ICurve")
+            circle = list(binding.value(curve.CircleParams))
+            if len(circle) >= 7:
+                details["center_mm"] = [round(units.m_to_mm(v), 6) for v in circle[:3]]
+                details["axis"] = [float(v) for v in circle[3:6]]
+                details["radius_mm"] = round(units.m_to_mm(circle[6]), 6)
+        except Exception:
+            pass
     length = _curve_length(edge)
     if length is not None:
         details["length_mm"] = round(units.m_to_mm(length), 6)
-    for key, parameter in (("start_mm", 0.0), ("end_mm", 1.0)):
-        try:
-            point = _point_or_none(binding.value(edge.Evaluate(parameter)))
-            if point and len(point) >= 3:
-                details[key] = [round(units.m_to_mm(v), 4) for v in point[:3]]
-        except Exception:
-            continue
+    try:
+        raw_start = edge.GetStartVertex()
+        raw_end = edge.GetEndVertex()
+        if raw_start is None and raw_end is None:
+            details["closed"] = True
+            details["endpoint_source"] = "no_vertices"
+            return details
+        start = (
+            _point_or_none(binding.wrap(raw_start, "IVertex").GetPoint())
+            if raw_start is not None
+            else None
+        )
+        end = (
+            _point_or_none(binding.wrap(raw_end, "IVertex").GetPoint())
+            if raw_end is not None
+            else None
+        )
+        if start and len(start) >= 3 and end and len(end) >= 3:
+            details["start_mm"] = [round(units.m_to_mm(v), 6) for v in start[:3]]
+            details["end_mm"] = [round(units.m_to_mm(v), 6) for v in end[:3]]
+            details["closed"] = sum(
+                (start[axis] - end[axis]) ** 2 for axis in range(3)
+            ) <= 1e-18
+            details["endpoint_source"] = "trimmed_vertices"
+        else:
+            details["closed"] = False
+            details["endpoint_source"] = "partial_vertices"
+    except Exception:
+        # Do not substitute curve parameter samples: they can describe the
+        # untrimmed support curve and lie far outside the edge's actual span.
+        details["closed"] = None
+        details["endpoint_source"] = "unavailable"
     return details
 
 
@@ -404,12 +441,63 @@ def select_vertices(doc, indices: list[int], append: bool = False, mark: int = 0
     return _select_collection(doc, vertices, indices, "VERTEX", append, mark)
 
 
-def mass_properties(doc=None) -> dict:
+def topology_entities(doc, kind: str) -> list:
+    """Raw entities in the same global index order the list_* tools report.
+
+    ``kind`` is ``face``, ``edge``, or ``vertex``. References need the raw
+    objects to compare persistent ids; listing tools return plain dicts.
+    """
+    if kind not in ("face", "edge", "vertex"):
+        raise InvalidParameterError(f"unknown topology kind {kind!r}")
+    entities = []
+    for body in _bodies(doc):
+        if kind == "face":
+            entities.extend(_faces(body))
+        elif kind == "edge":
+            entities.extend(_edges(body))
+        else:
+            entities.extend(_vertices(body))
+    return entities
+
+
+def select_bodies(doc, indices: list[int], append: bool = False, mark: int = 0) -> int:
+    """Select solid bodies through IBody2.Select2.
+
+    ``select_entity`` cannot select a body: IBody2 has no Select4, and its
+    two-argument Select2 takes an ISelectData, not a mark. This is the
+    measured path for up-to-body extrusions and later body operations.
+    """
+    bodies = _bodies(doc)
+    first = not append
+    data = create_select_data(doc, mark)
+    if data is None:
+        raise ComCallError("could not create selection data for body selection")
+    for index in indices:
+        if not isinstance(index, int) or index < 0 or index >= len(bodies):
+            raise SelectionError(
+                f"body index {index} out of range (0..{len(bodies) - 1})"
+            )
+        if not bodies[index].Select2(not first, data):
+            raise SelectionError(f"could not select body {index}")
+        first = False
+    return len(indices)
+
+
+MASS_PROPERTY_ACCURACY = {"standard": None, "maximum": 2}
+
+
+def mass_properties(doc=None, accuracy: str = "standard") -> dict:
+    if accuracy not in MASS_PROPERTY_ACCURACY:
+        raise InvalidParameterError(
+            f"unknown mass-property accuracy {accuracy!r}",
+            available=sorted(MASS_PROPERTY_ACCURACY),
+        )
     if doc is None:
         _, doc, _ = session.active_doc(("part", "assembly"))
     mass_prop = doc.Extension.CreateMassProperty()
     if mass_prop is None:
         raise ComCallError("CreateMassProperty returned None")
+    mass_prop = binding.wrap(mass_prop, "IMassProperty")
     result: dict = {}
     # Density must be read first: on a freshly created mass-property object,
     # reading geometry members first makes Density (and Mass) fall back to
@@ -434,22 +522,359 @@ def mass_properties(doc=None) -> dict:
             result["center_of_mass_mm"] = [round(units.m_to_mm(v), 4) for v in centre[:3]]
     except Exception:
         pass
+    result["accuracy"] = accuracy
+    result["status"] = None
+    result["method"] = "CreateMassProperty"
+    if accuracy == "maximum":
+        extension = binding.wrap(doc.Extension, "IModelDocExtension")
+        raw = extension.GetMassProperties2(2, 0, False)
+        values, out_values = session.com_result(raw, 1)
+        values = _point_or_none(binding.value(values))
+        status = out_values[0]
+        if values is None or len(values) < 6:
+            raise ComCallError(
+                "GetMassProperties2 returned incomplete maximum-accuracy data",
+                status=status,
+            )
+        result.update(
+            {
+                "mass_g": round(float(values[5]) * 1000.0, 6),
+                "volume_mm3": round(units.m3_to_mm3(float(values[3])), 6),
+                "area_mm2": round(units.m2_to_mm2(float(values[4])), 6),
+                "center_of_mass_mm": [
+                    round(units.m_to_mm(float(value)), 6) for value in values[:3]
+                ],
+                "status": int(status) if status is not None else None,
+                "method": "GetMassProperties2",
+            }
+        )
+        if status is not None and int(status) != 0:
+            raise ComCallError(
+                "GetMassProperties2 did not report a successful status",
+                status=int(status),
+                measurements={key: result.get(key) for key in (
+                    "mass_g", "volume_mm3", "area_mm2"
+                )},
+            )
     return result
 
 
 def bounding_box(doc=None) -> dict:
     if doc is None:
         _, doc, _ = session.active_doc(("part",))
-    part = binding.wrap(doc, "IPartDoc")
-    box = _point_or_none(binding.value(part.GetPartBox(True)))
-    if not box or len(box) < 6:
-        raise ComCallError("GetPartBox returned no geometry")
-    minimum = [round(units.m_to_mm(v), 4) for v in box[0:3]]
-    maximum = [round(units.m_to_mm(v), 4) for v in box[3:6]]
+    bodies = _bodies(doc, "solid")
+    if not bodies:
+        raise ComCallError("no solid bodies are available for exact extrema")
+    minimum = [float("inf")] * 3
+    maximum = [float("-inf")] * 3
+    for body in bodies:
+        for axis in range(3):
+            direction = [0.0, 0.0, 0.0]
+            direction[axis] = 1.0
+            max_raw = body.GetExtremePoint(*direction, 0.0, 0.0, 0.0)
+            max_ok, max_out = session.com_result(max_raw, 3)
+            direction[axis] = -1.0
+            min_raw = body.GetExtremePoint(*direction, 0.0, 0.0, 0.0)
+            min_ok, min_out = session.com_result(min_raw, 3)
+            if not max_ok or not min_ok or len(max_out) < 3 or len(min_out) < 3:
+                raise ComCallError(
+                    "IBody2.GetExtremePoint failed",
+                    body=str(binding.value(body.Name) or ""),
+                    axis="xyz"[axis],
+                )
+            try:
+                max_point = [float(value) for value in max_out]
+                min_point = [float(value) for value in min_out]
+            except (TypeError, ValueError) as exc:
+                raise ComCallError("GetExtremePoint returned invalid coordinates") from exc
+            maximum[axis] = max(maximum[axis], max_point[axis])
+            minimum[axis] = min(minimum[axis], min_point[axis])
+    minimum = [round(units.m_to_mm(value), 6) for value in minimum]
+    maximum = [round(units.m_to_mm(value), 6) for value in maximum]
     return {
         "min_mm": minimum,
         "max_mm": maximum,
         "size_mm": [round(maximum[i] - minimum[i], 4) for i in range(3)],
+        "accuracy": "exact_extreme_point",
+    }
+
+
+def _dot(first, second) -> float:
+    return sum(first[index] * second[index] for index in range(3))
+
+
+def _point_segment_distance_sq(point, first, second) -> float:
+    direction = [second[i] - first[i] for i in range(3)]
+    length_sq = _dot(direction, direction)
+    if length_sq <= 1e-30:
+        return _dot([point[i] - first[i] for i in range(3)],
+                    [point[i] - first[i] for i in range(3)])
+    offset = [point[i] - first[i] for i in range(3)]
+    parameter = max(0.0, min(1.0, _dot(offset, direction) / length_sq))
+    closest = [first[i] + parameter * direction[i] for i in range(3)]
+    delta = [point[i] - closest[i] for i in range(3)]
+    return _dot(delta, delta)
+
+
+def _point_triangle_distance_sq(point, triangle) -> float:
+    """Closest squared distance to a triangle, including its edge regions."""
+    first, second, third = triangle
+    ab = [second[i] - first[i] for i in range(3)]
+    ac = [third[i] - first[i] for i in range(3)]
+    ap = [point[i] - first[i] for i in range(3)]
+    d1, d2 = _dot(ab, ap), _dot(ac, ap)
+    if d1 <= 0.0 and d2 <= 0.0:
+        return _dot(ap, ap)
+    bp = [point[i] - second[i] for i in range(3)]
+    d3, d4 = _dot(ab, bp), _dot(ac, bp)
+    if d3 >= 0.0 and d4 <= d3:
+        return _dot(bp, bp)
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+        return _point_segment_distance_sq(point, first, second)
+    cp = [point[i] - third[i] for i in range(3)]
+    d5, d6 = _dot(ab, cp), _dot(ac, cp)
+    if d6 >= 0.0 and d5 <= d6:
+        return _dot(cp, cp)
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+        return _point_segment_distance_sq(point, first, third)
+    va = d3 * d6 - d5 * d4
+    if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+        return _point_segment_distance_sq(point, second, third)
+    denom = va + vb + vc
+    if abs(denom) <= 1e-30:
+        return min(
+            _point_segment_distance_sq(point, first, second),
+            _point_segment_distance_sq(point, second, third),
+            _point_segment_distance_sq(point, third, first),
+        )
+    inverse = 1.0 / denom
+    v, w = vb * inverse, vc * inverse
+    closest = [first[i] + ab[i] * v + ac[i] * w for i in range(3)]
+    delta = [point[i] - closest[i] for i in range(3)]
+    return _dot(delta, delta)
+
+
+def _surface_triangles(doc, limit: int = 512) -> tuple[list, int]:
+    triangles = []
+    missing_faces = 0
+    for body in _bodies(doc, "solid"):
+        for face in _faces(body):
+            try:
+                raw = binding.value(face.GetTessTriangles(True))
+                values = [float(value) for value in raw or []]
+            except Exception:
+                missing_faces += 1
+                continue
+            if not values or len(values) % 9 or not all(math.isfinite(value) for value in values):
+                missing_faces += 1
+                continue
+            for offset in range(0, len(values) - 8, 9):
+                triangles.append(
+                    tuple(
+                        tuple(values[offset + vertex * 3 + axis] for axis in range(3))
+                        for vertex in range(3)
+                    )
+                )
+    if missing_faces:
+        raise ComCallError("surface comparison requires tessellation for every solid face",
+                           faces_without_valid_tessellation=missing_faces)
+    total = len(triangles)
+    if total > limit:
+        step = total / float(limit)
+        triangles = [triangles[int(index * step)] for index in range(limit)]
+    return triangles, total
+
+
+def _directed_sampled_deviation(source: list, target: list) -> float:
+    points = [point for triangle in source for point in triangle]
+    if not points or not target:
+        raise ComCallError("surface tessellation is unavailable for comparison")
+    return max(
+        math.sqrt(min(_point_triangle_distance_sq(point, triangle) for triangle in target))
+        for point in points
+    )
+
+
+def _topology_summary(doc) -> dict:
+    bodies = _bodies(doc, "solid")
+    return {
+        "bodies": len(bodies),
+        "faces": sum(len(_faces(body)) for body in bodies),
+        "edges": sum(len(_edges(body)) for body in bodies),
+    }
+
+
+def compare_model_geometry(
+    reference_model: str,
+    volume_tolerance_mm3: float,
+    extrema_tolerance_mm: float,
+    surface_tolerance_mm: float,
+) -> dict:
+    """Compare the active part with another already-open part.
+
+    Surface deviation is the bidirectional maximum from a deterministic sample
+    of tessellated triangle vertices to a capped triangle sample. It is useful
+    for review but is not an analytic Hausdorff-distance proof.
+    """
+    tolerances = {
+        "volume_mm3": volume_tolerance_mm3,
+        "extrema_mm": extrema_tolerance_mm,
+        "surface_mm": surface_tolerance_mm,
+    }
+    if any(not math.isfinite(float(value)) or float(value) <= 0 for value in tolerances.values()):
+        raise InvalidParameterError("all geometry comparison tolerances must be finite and positive")
+    application, current, _ = session.active_doc(("part",))
+    if not isinstance(reference_model, str) or not reference_model.strip():
+        raise InvalidParameterError("reference_model is required")
+    wanted = reference_model.strip()
+    normalized = wanted.replace("/", "\\").rstrip("\\").casefold()
+    matches = []
+    for raw in application.GetDocuments() or []:
+        try:
+            candidate = session.wrap_doc(raw)
+            if int(candidate.GetType()) != 1:
+                continue
+            path = str(binding.value(candidate.GetPathName) or "")
+            title = str(binding.value(candidate.GetTitle) or "")
+        except Exception:
+            continue
+        candidate_path = path.replace("/", "\\").rstrip("\\").casefold()
+        if normalized == candidate_path or wanted.casefold() == title.casefold():
+            matches.append((candidate, path or title))
+    if len(matches) != 1:
+        raise SelectionError(
+            "reference_model must identify exactly one other open part",
+            reference_model=wanted,
+            matches=[item[1] for item in matches],
+        )
+    reference, reference_id = matches[0]
+    current_doc_info = session.doc_info(current)
+    current_id = str(current_doc_info.get("path") or current_doc_info.get("title") or "")
+    if reference is current or (
+        current_id and reference_id.replace("/", "\\").casefold()
+        == current_id.replace("/", "\\").casefold()
+    ):
+        raise InvalidParameterError("reference_model must differ from the active part")
+    current_info = {
+        "mass": mass_properties(current, "maximum"),
+        "bounds": bounding_box(current),
+        "topology": _topology_summary(current),
+    }
+    reference_info = {
+        "mass": mass_properties(reference, "maximum"),
+        "bounds": bounding_box(reference),
+        "topology": _topology_summary(reference),
+    }
+    volume_delta = abs(
+        current_info["mass"]["volume_mm3"] - reference_info["mass"]["volume_mm3"]
+    )
+    axis_deltas = {}
+    for axis, label in enumerate("xyz"):
+        axis_deltas[label] = {
+            "min_mm": abs(
+                current_info["bounds"]["min_mm"][axis]
+                - reference_info["bounds"]["min_mm"][axis]
+            ),
+            "max_mm": abs(
+                current_info["bounds"]["max_mm"][axis]
+                - reference_info["bounds"]["max_mm"][axis]
+            ),
+        }
+    max_extrema_delta = max(
+        value for bounds in axis_deltas.values() for value in bounds.values()
+    )
+    current_mesh, current_triangle_count = _surface_triangles(current)
+    reference_mesh, reference_triangle_count = _surface_triangles(reference)
+    surface_delta_m = max(
+        _directed_sampled_deviation(current_mesh, reference_mesh),
+        _directed_sampled_deviation(reference_mesh, current_mesh),
+    )
+    surface_delta_mm = units.m_to_mm(surface_delta_m)
+    passed = (
+        volume_delta <= float(volume_tolerance_mm3)
+        and max_extrema_delta <= float(extrema_tolerance_mm)
+        and surface_delta_mm <= float(surface_tolerance_mm)
+    )
+    return {
+        "data": {
+            "reference_model": reference_id,
+            "active_model": current_doc_info,
+            "passed": passed,
+            "tolerance_basis": "measured_volume_extrema_and_sampled_surface",
+            "release_equivalence_proven": False,
+            "tolerances": tolerances,
+            "deltas": {
+                "volume_mm3": round(volume_delta, 9),
+                "extrema_mm": axis_deltas,
+                "max_extrema_mm": round(max_extrema_delta, 9),
+                "sampled_surface_deviation_mm": round(surface_delta_mm, 9),
+            },
+            "topology": {
+                "active": current_info["topology"],
+                "reference": reference_info["topology"],
+            },
+            "surface_method": {
+                "name": "bidirectional_tessellated_vertex_to_triangle_sample",
+                "active_triangles_total": current_triangle_count,
+                "reference_triangles_total": reference_triangle_count,
+                "triangles_sampled": {"active": len(current_mesh), "reference": len(reference_mesh)},
+                "exact_analytic_distance": False,
+            },
+        },
+        "evidence": {"active": current_info, "reference": reference_info},
+    }
+
+
+EXTRUDE_DEFINITION_TYPES = {"Boss", "Extrusion", "Cut", "BossThin", "CutThin"}
+
+
+def editable_feature_diagnostics(doc=None) -> dict:
+    """Read feature types and known editable parameters without changing data.
+
+    The shipped typelib exposes directional depth getters on
+    ``IExtrudeFeatureData2``. Other feature families are deliberately marked
+    unavailable until their definition members have been probed and verified.
+    """
+    if doc is None:
+        _, doc, _ = session.active_doc(("part",))
+    features = []
+    for feature in session.iter_features(doc):
+        try:
+            name = str(binding.value(feature.Name) or "")
+            kind = str(feature.GetTypeName2() or "")
+        except Exception:
+            continue
+        item = {"name": name, "type": kind, "editable_parameters": {}}
+        if kind not in EXTRUDE_DEFINITION_TYPES:
+            item["definition_status"] = "not_probed"
+            features.append(item)
+            continue
+        try:
+            raw_definition = feature.GetDefinition()
+            if raw_definition is None:
+                raise ComCallError("GetDefinition returned None")
+            definition = binding.wrap(raw_definition, "IExtrudeFeatureData2")
+            item["definition_interface"] = "IExtrudeFeatureData2"
+            item["editable_parameters"] = {
+                "depth_forward_mm": round(
+                    units.m_to_mm(float(binding.value(definition.GetDepth(True)))), 6
+                ),
+                "depth_reverse_mm": round(
+                    units.m_to_mm(float(binding.value(definition.GetDepth(False)))), 6
+                ),
+            }
+            item["definition_status"] = "read_back"
+        except Exception as exc:
+            item["definition_status"] = "read_failed"
+            item["definition_error"] = f"{type(exc).__name__}: {exc}"
+        features.append(item)
+    return {
+        "features": features,
+        "count": len(features),
+        "supported_definition_types": sorted(EXTRUDE_DEFINITION_TYPES),
+        "unsupported_parameters_are_not_inferred": True,
     }
 
 

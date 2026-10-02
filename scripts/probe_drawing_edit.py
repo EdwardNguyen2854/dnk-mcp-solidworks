@@ -100,6 +100,9 @@ def main() -> int:
 
     documents.new_document("part")
     part_doc = session.active_doc(("part",))[1]
+    part_info = session.doc_info(part_doc)
+    model_reference = part_info.get("path") or part_info["title"]
+    configuration = part_info.get("active_configuration") or "Default"
     created.append(str(binding.value(part_doc.GetTitle)))
     sketch.create_sketch("Front Plane")
     sketch.rectangle(0.0, 0.0, 120.0, 80.0)
@@ -111,7 +114,7 @@ def main() -> int:
     drawings.create_drawing(paper_size="A3", scale=1.0, first_angle=True)
     drawing_doc = session.active_doc(("drawing",))[1]
     created.insert(0, str(binding.value(drawing_doc.GetTitle)))
-    drawings.insert_standard_views()
+    drawings.insert_standard_views(model_reference, configuration)
 
     views = drawings.list_drawing_views().get("views", [])
     front = next((v for v in views if v.get("orientation") == "front"), None)
@@ -242,7 +245,9 @@ def main() -> int:
     names_before = {v["name"] for v in drawings.list_drawing_views()["views"]}
 
     def delete_view():
-        drawings.insert_model_view("isometric", 340.0, 240.0, None)
+        drawings.insert_model_view(
+            "isometric", model_reference, configuration, 340.0, 240.0
+        )
         names_after = {v["name"] for v in drawings.list_drawing_views()["views"]}
         new_names = sorted(names_after - names_before)
         if not new_names:

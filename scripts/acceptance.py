@@ -67,6 +67,44 @@ async def test_box(client: Client) -> None:
     check("box extrude volume", abs(volume - 150000) < 1, f"{volume:.2f} mm3")
     check("box extrude evidence", "evidence" in result, "evidence present")
 
+    accurate = await client.call("get_mass_properties", accuracy="maximum")
+    accurate_data = accurate.get("data", {})
+    check(
+        "maximum-accuracy mass properties return successful status",
+        accurate.get("ok")
+        and accurate_data.get("accuracy") == "maximum"
+        and accurate_data.get("status") == 0
+        and abs(float(accurate_data.get("volume_mm3", -1)) - 150000.0) < 1.0,
+        json.dumps(accurate_data),
+    )
+    bounds = await client.call("get_bounding_box")
+    bounds_data = bounds.get("data", {})
+    check(
+        "exact extrema match the 100 x 60 x 25 mm test block",
+        bounds.get("ok")
+        and bounds_data.get("size_mm") == [100.0, 60.0, 25.0],
+        json.dumps(bounds_data),
+    )
+    definitions = await client.call("inspect_editable_features")
+    base_definition = next(
+        (
+            item
+            for item in definitions.get("data", {}).get("features", [])
+            if item.get("name") == "Base"
+        ),
+        {},
+    )
+    check(
+        "extrude definition exposes its editable 25 mm depth",
+        definitions.get("ok")
+        and base_definition.get("definition_status") == "read_back"
+        and abs(
+            float(base_definition.get("editable_parameters", {}).get("depth_forward_mm", -1))
+            - 25.0
+        ) < 0.01,
+        json.dumps(base_definition),
+    )
+
     edges = await client.call("list_edges")
     verticals = [
         edge["index"]

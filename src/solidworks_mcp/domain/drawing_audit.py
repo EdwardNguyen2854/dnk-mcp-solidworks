@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import math
 
+from ..com import binding
+from ..com import units
 from . import drawings, session
 
 # Annotation types with estimated text boxes. Mechanical marks (centre marks,
@@ -40,7 +42,7 @@ TEXT_ANNOTATIONS = {
 
 FRAME_INSET_MM = 10.0
 CHAR_WIDTH_FACTOR = 0.62
-EDGE_BAND_MM = 12.0
+EDGE_BAND_MM = 0.0
 TITLE_BLOCK_MARGIN_MM = 20.0
 
 
@@ -137,7 +139,7 @@ def audit_annotations(
     views: list[dict],
     sheet_size_mm: list[float],
     *,
-    inset_mm: float = FRAME_INSET_MM,
+    inset_mm: float | dict[str, float] = FRAME_INSET_MM,
     min_gap_mm: float = 2.0,
     text_height_mm: float = 3.5,
     edge_band_mm: float = EDGE_BAND_MM,
@@ -153,9 +155,14 @@ def audit_annotations(
     """
     width_mm = float(sheet_size_mm[0])
     height_mm = float(sheet_size_mm[1])
-    frame = (
-        (inset_mm, inset_mm, width_mm - inset_mm, height_mm - inset_mm)
-    )
+    if isinstance(inset_mm, dict):
+        left = float(inset_mm.get("left", FRAME_INSET_MM))
+        bottom = float(inset_mm.get("bottom", FRAME_INSET_MM))
+        right = float(inset_mm.get("right", FRAME_INSET_MM))
+        top = float(inset_mm.get("top", FRAME_INSET_MM))
+    else:
+        left = bottom = right = top = float(inset_mm)
+    frame = (left, bottom, width_mm - right, height_mm - top)
     skipped = {"frame_decoration": 0, "title_block": 0}
     items = []
     for view in views:
@@ -210,8 +217,36 @@ def audit_annotations(
                     "position_mm": [round(cx, 2), round(cy, 2)],
                     "size_mm": [round(width, 2), round(height, 2)],
                     "box": box,
+                    "duplicate_key": (
+                        " ".join(str(text).casefold().split())
+                        if annotation.get("type") == "note"
+                        else None
+                    ),
                 }
             )
+
+    duplicate_groups = []
+    for item in items:
+        key = item.get("duplicate_key")
+        if key:
+            group = next((group for group in duplicate_groups
+                          if group[0]["duplicate_key"] == key
+                          and math.dist(group[0]["position_mm"], item["position_mm"]) <= 0.1), None)
+            if group is None:
+                duplicate_groups.append([item])
+            else:
+                group.append(item)
+    duplicate_notes = [
+        {
+            "text": group[0]["text"],
+            "annotations": [
+                {key: item[key] for key in ("view", "index", "position_mm")}
+                for item in group
+            ],
+        }
+        for group in duplicate_groups
+        if len(group) > 1
+    ]
 
     collisions = []
     for first_index, first in enumerate(items):
@@ -271,26 +306,30 @@ def audit_annotations(
         ),
         "items": [
             {
-                key: item[key]
-                for key in ("view", "index", "type", "text", "position_mm", "size_mm")
+                **{
+                    key: item[key]
+                    for key in ("view", "index", "type", "text", "position_mm", "size_mm")
+                },
+                "estimated_box_mm": [round(value, 3) for value in item["box"]],
             }
             for item in items
         ],
         "collisions": collisions,
+        "duplicate_notes": duplicate_notes,
         "off_frame": off_frame,
         "counts": {
             "items": len(items),
             "collisions": len(collisions),
+            "duplicate_note_groups": len(duplicate_notes),
             "off_frame": len(off_frame),
             "skipped": skipped,
         },
         "estimation": (
             "boxes are estimated from the measured annotation position and "
-            "character count at {:.1f} mm text height; they are a screening "
-            "aid, not measured text bounds. The {:.0f} mm border band and the "
-            "title-block region are skipped as sheet-format content".format(
-                text_height_mm, edge_band_mm
-            )
+            "character count at {:.1f} mm text height; all returned text "
+            "annotations, including sheet-format/title-block notes, are "
+            "included. This screening estimate does not replace raster review."
+            .format(text_height_mm)
         ),
     }
 
@@ -299,23 +338,103 @@ def layout_audit(
     sheet_name: str | None = None,
     min_gap_mm: float = 2.0,
     text_height_mm: float = 3.5,
-    inset_mm: float = FRAME_INSET_MM,
+    inset_mm: float | None = None,
     edge_band_mm: float = EDGE_BAND_MM,
 ) -> dict:
     """Audit the active drawing's annotation layout (plain result data)."""
     _, doc, _ = session.active_doc(("drawing",))
     listed = drawings.list_annotations(None, sheet_name)
-    size = drawings._sheet_properties(drawings._current_sheet(doc)).get(
-        "size_mm"
-    ) or [420.0, 297.0]
+    sheet_properties = drawings._sheet_properties(drawings._current_sheet(doc))
+    size = sheet_properties.get("size_mm") or [420.0, 297.0]
+    if inset_mm is None:
+        paper = drawings.PAPER_SIZE_NAMES.get(sheet_properties.get("paper_code"))
+        if paper in {"A0", "A1", "A2", "A3", "A4"}:
+            # ISO 5457 filing margin on the left; other sides use the measured
+            # 10 mm frame margin for the stock ISO templates.
+            inset = {"left": 20.0, "bottom": 10.0, "right": 10.0, "top": 10.0}
+        else:
+            inset = FRAME_INSET_MM
+    else:
+        inset = float(inset_mm)
     result = audit_annotations(
         listed.get("views", []),
         size,
-        inset_mm=float(inset_mm),
+        inset_mm=inset,
         min_gap_mm=float(min_gap_mm),
         text_height_mm=float(text_height_mm),
         edge_band_mm=float(edge_band_mm),
-        title_block_region_mm=title_block_region(listed),
+        title_block_region_mm=None,
     )
+    revision_table = _revision_table_bounds(doc)
+    result["revision_table"] = revision_table
+    if revision_table.get("present") and revision_table.get("box_mm"):
+        box = revision_table["box_mm"]
+        frame = result["frame_mm"]
+        table_sides = []
+        if box[0] < frame["min"][0]:
+            table_sides.append("left")
+        if box[1] < frame["min"][1]:
+            table_sides.append("bottom")
+        if box[2] > frame["max"][0]:
+            table_sides.append("right")
+        if box[3] > frame["max"][1]:
+            table_sides.append("top")
+        result["revision_table"]["off_frame_sides"] = table_sides
+        result["revision_table"]["inside_frame"] = not table_sides
+        result["revision_table_collisions"] = [
+            {
+                "view": item["view"],
+                "index": item["index"],
+                "type": item["type"],
+                "overlap_area_mm2": round(
+                    rect_overlap_area(tuple(item["estimated_box_mm"]), tuple(box)), 2
+                ),
+            }
+            for item in result["items"]
+            if rect_overlap_area(tuple(item["estimated_box_mm"]), tuple(box)) > 0.0
+        ]
+    else:
+        result["revision_table_collisions"] = []
+    result["audit_scope"] = {
+        "text_annotations": "all sheet-view annotations, including title-block and frame notes",
+        "revision_table": "exact table extent when the SOLIDWORKS API exposes it",
+        "frame": "usable frame estimated from measured paper size and ISO insets",
+        "leaders_and_frame_geometry": "require rendered raster review",
+        "rendered_text_overflow": "estimated boxes require rendered raster review",
+    }
     result["sheet"] = sheet_name or drawings._sheet_name(drawings._current_sheet(doc))
     return result
+
+
+def _revision_table_bounds(doc) -> dict:
+    """Return exact table bounds from its annotation position and cell sizes."""
+    try:
+        annotation = drawings._table_annotation(doc)
+        if annotation is None:
+            return {"present": False}
+        table = binding.wrap(annotation.GetSpecificAnnotation(), "ITableAnnotation")
+        columns = int(binding.value(table.ColumnCount))
+        rows = int(binding.value(table.RowCount))
+        width = sum(
+            float(binding.value(table.GetColumnWidth(index)))
+            for index in range(columns)
+        )
+        height = sum(
+            float(binding.value(table.GetRowHeight(index)))
+            for index in range(rows)
+        )
+        position = [float(value) for value in binding.value(annotation.GetPosition())]
+        x, y = units.m_to_mm(position[0]), units.m_to_mm(position[1])
+        width_mm, height_mm = units.m_to_mm(width), units.m_to_mm(height)
+        return {
+            "present": True,
+            "rows": rows,
+            "columns": columns,
+            "box_mm": [x, y, x + width_mm, y + height_mm],
+            "measurement": "annotation position plus exact row/column sizes",
+        }
+    except Exception as exc:
+        return {
+            "present": None,
+            "status": f"bounds_unavailable: {type(exc).__name__}: {exc}",
+        }

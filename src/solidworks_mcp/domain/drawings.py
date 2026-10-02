@@ -1,6 +1,8 @@
 """Engineering drawings: sheets, model views and annotations."""
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from pathlib import Path
@@ -141,13 +143,19 @@ DIMENSION_MARGIN_MM = 8.0
 DIMENSION_MIN_SPACING_MM = 6.5
 FRAME_MARGIN_MM = 10.0
 
-# swViewDisplayMode_e, measured off swconst.tlb (34.0).
+# swDisplayMode_e, required by IView.SetDisplayMode3/GetDisplayMode2.
+# Do not substitute swViewDisplayMode_e: its overlapping values silently
+# render the wrong mode on SOLIDWORKS 2026 SP0.0.
 DISPLAY_MODES = {
-    "wireframe": 1,
+    "wireframe": 0,
+    "hidden_lines_grayed": 1,
     "hidden_lines_removed": 2,
-    "hidden_lines_grayed": 3,
-    "shaded": 4,
-    "shaded_with_edges": 5,
+    "shaded": 3,
+    "faceted_wireframe": 4,
+    "faceted_hidden_lines_grayed": 5,
+    "faceted_hidden_lines_removed": 6,
+    "shaded_with_edges": 7,
+    "default": 8,
 }
 DISPLAY_MODE_NAMES = {value: name for name, value in DISPLAY_MODES.items()}
 
@@ -428,7 +436,67 @@ def create_drawing(
     }
 
 
-def _resolved_view_name(application, model: str | None, view: str) -> str:
+def _model_reference_record(application, model_reference: str, configuration: str) -> dict:
+    """Resolve an explicit open model and validate its named configuration."""
+    if not isinstance(model_reference, str) or not model_reference.strip():
+        raise InvalidParameterError("model_reference is required")
+    if not isinstance(configuration, str) or not configuration.strip():
+        raise InvalidParameterError("configuration is required")
+    target = model_reference.strip()
+    normalized = target.replace("/", "\\").rstrip("\\").casefold()
+    matches = []
+    for raw in application.GetDocuments() or []:
+        try:
+            model_doc = session.wrap_doc(raw)
+            path = str(binding.value(model_doc.GetPathName) or "")
+            title = str(binding.value(model_doc.GetTitle) or "")
+            doc_type = int(model_doc.GetType())
+        except Exception:
+            continue
+        path_key = path.replace("/", "\\").rstrip("\\").casefold()
+        if normalized == path_key or target.casefold() == title.casefold():
+            matches.append((model_doc, path, title, doc_type))
+    if len(matches) != 1:
+        raise SelectionError(
+            "model_reference must identify exactly one open part or assembly",
+            model_reference=target,
+            matches=[{"path": path, "title": title} for _, path, title, _ in matches],
+            hint="Pass the exact open model path or its unique document title.",
+        )
+    model_doc, path, title, doc_type = matches[0]
+    if doc_type not in (1, 2):
+        raise SelectionError("drawing views require an open part or assembly")
+    config_raw = model_doc.GetConfigurationByName(configuration)
+    if config_raw is None:
+        raise SelectionError(
+            f"configuration {configuration!r} does not exist in {title!r}"
+        )
+    config = binding.wrap(config_raw, "IConfiguration")
+    actual_config = str(binding.value(config.Name) or "")
+    if actual_config.casefold() != configuration.casefold():
+        raise VerificationError(
+            "SOLIDWORKS resolved a different model configuration",
+            requested=configuration,
+            measured=actual_config,
+        )
+    return {
+        "document": model_doc,
+        "path": path,
+        "title": title,
+        "model_type": "part" if doc_type == 1 else "assembly",
+        "configuration": actual_config,
+        "reference": path or title,
+    }
+
+
+def _same_model_reference(expected_path: str, expected_title: str, actual: str) -> bool:
+    actual_key = actual.replace("/", "\\").rstrip("\\").casefold()
+    if expected_path:
+        return actual_key == expected_path.replace("/", "\\").rstrip("\\").casefold()
+    return actual.casefold() == expected_title.casefold()
+
+
+def _resolved_view_name(application, model_reference: str, view: str) -> str:
     """Map a standard orientation to the name this install actually uses.
 
     Standard view names are localized (*Isometric is *等轴测 on a Chinese
@@ -445,7 +513,7 @@ def _resolved_view_name(application, model: str | None, view: str) -> str:
             title = str(binding.value(doc.GetTitle) or "")
         except Exception:
             continue
-        if model and model not in (path, title):
+        if model_reference.casefold() not in (path.casefold(), title.casefold()):
             continue
         try:
             names = [str(name) for name in binding.value(doc.GetModelViewNames()) or []]
@@ -458,39 +526,72 @@ def _resolved_view_name(application, model: str | None, view: str) -> str:
 
 def insert_model_view(
     view: str,
+    model_reference: str,
+    configuration: str,
     x_mm: float = 100.0,
     y_mm: float = 150.0,
-    model: str | None = None,
 ) -> dict:
     if view.lower() not in STANDARD_VIEWS:
         raise SelectionError(
             f"unknown standard view {view!r}", available=sorted(STANDARD_VIEWS)
         )
     application = session.app()
+    model_record = _model_reference_record(application, model_reference, configuration)
     _, doc, _ = session.active_doc(("drawing",))
     drawing = _drawing(doc)
-    models = []
-    if model:
-        models.append(model)
-    else:
-        models.append("")
-    view_name = _resolved_view_name(application, model, view.lower())
-    created = None
-    for candidate in models:
-        raw = drawing.CreateDrawViewFromModelView3(
-            candidate, view_name, units.mm_to_m(x_mm), units.mm_to_m(y_mm), 0.0
-        )
-        if raw is not None:
-            created = raw
-            break
+    view_name = _resolved_view_name(application, model_record["reference"], view.lower())
+    created = drawing.CreateDrawViewFromModelView3(
+        model_record["reference"], view_name,
+        units.mm_to_m(x_mm), units.mm_to_m(y_mm), 0.0
+    )
     if created is None:
         raise ComCallError(
             f"could not create {view!r} view",
-            hint="Pass the model path or title explicitly.",
+            model_reference=model_record["reference"],
+            configuration=model_record["configuration"],
+        )
+    created = binding.wrap(created, "IView")
+    # Set the view's configuration independently of the source's active one;
+    # verify readback when the installed binding exposes the getter.
+    created.ReferencedConfiguration = model_record["configuration"]
+    referenced = str(binding.value(created.GetReferencedModelName) or "")
+    if not referenced or not _same_model_reference(
+        model_record["path"], model_record["title"], referenced
+    ):
+        raise VerificationError(
+            "the inserted view references a different model",
+            requested=model_record["reference"],
+            measured=referenced,
+            view=_view_name(created),
+        )
+    try:
+        configuration_readback = str(binding.value(created.ReferencedConfiguration) or "")
+    except Exception:
+        configuration_readback = ""
+    if configuration_readback and configuration_readback.casefold() != configuration.casefold():
+        raise VerificationError(
+            "the inserted view references a different configuration",
+            requested=configuration,
+            measured=configuration_readback,
+            view=_view_name(created),
         )
     return {
-        "data": {"view": view, "created": True, "name": _view_name(created)},
-        "evidence": {"rebuild": inspect.rebuild(doc)},
+        "data": {
+            "view": view,
+            "created": True,
+            "name": _view_name(created),
+            "model_reference": model_record["reference"],
+            "configuration": model_record["configuration"],
+        },
+        "evidence": {
+            "rebuild": inspect.rebuild(doc),
+            "model_reference": referenced,
+            "configuration_requested": model_record["configuration"],
+            "configuration_readback": configuration_readback or None,
+            "configuration_verification": (
+                "view_readback" if configuration_readback else "view_property_set"
+            ),
+        },
     }
 
 
@@ -602,7 +703,8 @@ def _layout_standard_views(views: dict, gap_mm: float) -> dict:
 
 
 def insert_standard_views(
-    model: str | None = None,
+    model_reference: str,
+    configuration: str,
     front_mm: list[float] | None = None,
     gap_mm: float = 20.0,
     projection: str = "first_angle",
@@ -648,7 +750,7 @@ def insert_standard_views(
     ]
     created = {}
     for view, x, y in placements:
-        result = insert_model_view(view, x, y, model)
+        result = insert_model_view(view, model_reference, configuration, x, y)
         created[view] = result["data"]["name"]
     active_sheet = _sheet_name(_current_sheet(doc))
     views = {}
@@ -698,7 +800,8 @@ def insert_standard_views(
     return {
         "data": {
             "views": created,
-            "model": model,
+            "model_reference": model_reference,
+            "configuration": configuration,
             "projection": projection,
             "front_mm": front,
             "gap_mm": gap_mm,
@@ -770,6 +873,25 @@ def _views(doc, sheet_name: str | None = None) -> list:
             views.append(view)
         except Exception:
             continue
+    # GetViews omits the sheet pseudo-view on typelib 34. The drawing view
+    # chain is also needed for sheet-format notes and frame annotations.
+    try:
+        current = drawing.GetFirstView()
+        visited = set()
+        while current is not None:
+            view = binding.wrap(current, "IView")
+            key = (_view_sheet_name(view), _view_name(view))
+            if key in visited:
+                break
+            visited.add(key)
+            if (sheet_name is None or key[0] == sheet_name) and not any(
+                (_view_sheet_name(existing), _view_name(existing)) == key
+                for existing in views
+            ):
+                views.append(view)
+            current = view.GetNextView()
+    except Exception:
+        pass
     return views
 
 
@@ -815,8 +937,18 @@ def _view_info(view) -> dict:
         referenced = str(binding.value(view.GetReferencedModelName) or "")
         if referenced:
             info["model"] = referenced
+            info["model_reference"] = referenced
     except Exception:
         pass
+    try:
+        configuration = str(binding.value(view.ReferencedConfiguration) or "")
+        info["configuration"] = configuration or None
+        info["configuration_readback_status"] = (
+            "read_back" if configuration else "empty"
+        )
+    except Exception:
+        info["configuration"] = None
+        info["configuration_readback_status"] = "not_exposed_by_typelib"
     try:
         info["dimensions"] = int(view.GetDimensionCount())
     except Exception:
@@ -1008,6 +1140,18 @@ def _note_info(
     return info
 
 
+def _annotation_identifier(document_ref: str, sheet: str, view: str, info: dict) -> str:
+    """Stable listing token for a specific observed annotation state."""
+    payload = json.dumps(
+        [document_ref, sheet, view, info],
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+        separators=(",", ":"),
+    )
+    return "ann-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
 def _dimension_value(display) -> float | None:
     """Read IDimension.Value (document units; mm on a metric drawing)."""
     try:
@@ -1101,19 +1245,28 @@ def _title_block_info(
         for name, value in (properties or {}).items()
     }
     matched = {}
+    displayed_values = {}
     for name, value in values.items():
         if not value:
             continue
-        matched[name] = any(
-            note.get("visible", True)
-            and str(note.get("text", "")).strip() == value
-            for note in candidates
-        ) or any(
-            name.lower() in str(note.get("property_linked_text", "")).lower()
-            and str(note.get("text", "")).strip() == value
-            for note in candidates
+        displayed = next(
+            (
+                note.get("resolved_text", note.get("text", ""))
+                for note in candidates
+                if note.get("visible", True)
+                and name.casefold()
+                in str(
+                    note.get("property_linked_text") or note.get("text", "")
+                ).casefold()
+                and str(note.get("resolved_text", note.get("text", ""))).strip()
+                == value
+            ),
+            None,
         )
+        displayed_values[name] = displayed
+        matched[name] = displayed is not None
     info["matched_properties"] = matched
+    info["displayed_property_values"] = displayed_values
     info["verified"] = bool(matched) and all(matched.values())
     info["notes"] = [*object_notes, *linked_notes]
     return info
@@ -1619,14 +1772,12 @@ def set_view(
             requested=scale,
             measured=measured.get("scale"),
         )
-    if display_mode is not None and measured.get("display_mode") not in (
-        display_mode,
-        None,
-    ):
+    if display_mode is not None and measured.get("display_mode") != display_mode:
         raise VerificationError(
             "SOLIDWORKS did not retain the requested drawing-view display mode",
             requested=display_mode,
             measured=measured.get("display_mode"),
+            measured_numeric=int(binding.value(view.GetDisplayMode2)),
         )
     if tangent_edges is not None and measured.get("tangent_edges") not in (
         tangent_edges,
@@ -2241,6 +2392,10 @@ def insert_model_annotations(
     if added <= 0:
         raise VerificationError(
             "no model items were imported",
+            annotation_counts_before=before_counts,
+            annotation_counts_after=after_counts,
+            requested_types=chosen,
+            source=source,
             hint="On this build InsertModelAnnotations3 can return nothing even "
             "when the model has dimensions; use drawing_auto_dimension to "
             "generate dimensions from the view geometry instead.",
@@ -2427,6 +2582,8 @@ def list_annotations(
     except Exception:
         model_map = None
     system_map = _system_property_map(doc)
+    document_info = session.doc_info(doc)
+    document_ref = document_info.get("path") or document_info.get("title", "")
     views = []
     for view in _views(doc, sheet_name):
         name = _view_name(view)
@@ -2530,6 +2687,12 @@ def list_annotations(
                     info["text"] = next((text for text in texts if text), "")
                 except Exception:
                     pass
+            info["id"] = _annotation_identifier(
+                document_ref,
+                _view_sheet_name(view) or "",
+                name,
+                info,
+            )
             annotations.append(info)
             try:
                 current = annotation.GetNext()
@@ -2562,6 +2725,26 @@ def _named_view(doc, view_name: str):
     for view in views:
         if _view_name(view) == str(view_name):
             return view
+    # GetViews omits the sheet pseudo-view on typelib 34 even though the
+    # public listing includes it. IDrawingDoc.GetFirstView is the reliable
+    # route to the drawing-view chain, whose first member is the sheet view.
+    try:
+        current = _drawing(doc).GetFirstView()
+        visited = set()
+        while current is not None:
+            view = binding.wrap(current, "IView")
+            name = _view_name(view)
+            if name == str(view_name) and (
+                _view_sheet_name(view) == active_sheet
+                or (not visited and name == active_sheet)
+            ):
+                return view
+            if name in visited:
+                break
+            visited.add(name)
+            current = view.GetNextView()
+    except Exception:
+        pass
     raise SelectionError(
         f"drawing view {view_name!r} not found",
         available=[_view_name(view) for view in views],
@@ -2762,6 +2945,283 @@ def set_annotation_text(
     return {
         "data": data,
         "evidence": {"annotations": list_annotations(_view_name(view))},
+    }
+
+
+def _annotation_snapshot(annotation, kind: str) -> dict:
+    position = [float(value) for value in binding.value(annotation.GetPosition()) or []]
+    snapshot = {"annotation": annotation, "kind": kind, "position": position[:3]}
+    if kind == "note":
+        note = binding.wrap(annotation.GetSpecificAnnotation(), "INote")
+        snapshot["text"] = str(binding.value(note.GetText) or "")
+        try:
+            text_format = binding.wrap(note.GetTextFormat(), "ITextFormat")
+            snapshot["height"] = float(binding.value(text_format.CharHeight))
+        except Exception:
+            snapshot["height"] = None
+    elif kind == "dimension":
+        dimension = binding.wrap(
+            annotation.GetSpecificAnnotation(), "IDisplayDimension"
+        )
+        snapshot["prefix"] = str(binding.value(dimension.GetText(1)) or "")
+        snapshot["suffix"] = str(binding.value(dimension.GetText(2)) or "")
+    return snapshot
+
+
+def _restore_annotation_snapshot(snapshot: dict) -> None:
+    annotation = snapshot["annotation"]
+    position = snapshot["position"]
+    if len(position) >= 2:
+        annotation.SetPosition(position[0], position[1], position[2] if len(position) > 2 else 0.0)
+    if snapshot["kind"] == "note":
+        note = binding.wrap(annotation.GetSpecificAnnotation(), "INote")
+        note.SetText(snapshot["text"])
+        if snapshot.get("height") is not None:
+            text_format = binding.wrap(note.GetTextFormat(), "ITextFormat")
+            text_format.CharHeight = snapshot["height"]
+            note.SetTextFormat(0, text_format)
+    elif snapshot["kind"] == "dimension":
+        dimension = binding.wrap(
+            annotation.GetSpecificAnnotation(), "IDisplayDimension"
+        )
+        dimension.SetText(1, snapshot["prefix"])
+        dimension.SetText(2, snapshot["suffix"])
+
+
+def _verify_annotation_snapshot(snapshot: dict) -> bool:
+    annotation = snapshot["annotation"]
+    position = [float(value) for value in binding.value(annotation.GetPosition()) or []]
+    expected = snapshot["position"]
+    if len(position) < 2 or any(
+        abs(position[index] - expected[index]) > units.mm_to_m(0.1)
+        for index in range(2)
+    ):
+        return False
+    if snapshot["kind"] == "note":
+        note = binding.wrap(annotation.GetSpecificAnnotation(), "INote")
+        if str(binding.value(note.GetText) or "") != snapshot["text"]:
+            return False
+        if snapshot.get("height") is not None:
+            text_format = binding.wrap(note.GetTextFormat(), "ITextFormat")
+            if abs(float(binding.value(text_format.CharHeight)) - snapshot["height"]) > 1e-8:
+                return False
+    elif snapshot["kind"] == "dimension":
+        dimension = binding.wrap(
+            annotation.GetSpecificAnnotation(), "IDisplayDimension"
+        )
+        if str(binding.value(dimension.GetText(1)) or "") != snapshot["prefix"]:
+            return False
+        if str(binding.value(dimension.GetText(2)) or "") != snapshot["suffix"]:
+            return False
+    return True
+
+
+def update_annotations(updates: list[dict]) -> dict:
+    """Apply typed note/dimension edits as one verified rebuild transaction.
+
+    IDs come from list_annotations and remain valid until the addressed
+    annotation is changed. The batch is resolved before mutation; any failure
+    restores every captured text/position value and verifies the rollback.
+    """
+    if not isinstance(updates, list) or not updates:
+        raise InvalidParameterError("updates must be a non-empty array")
+    _, doc, _ = session.active_doc(("drawing",))
+    active_sheet = _sheet_name(_current_sheet(doc))
+    listed = list_annotations(sheet_name=active_sheet)
+    by_id = {
+        annotation["id"]: (view["name"], annotation)
+        for view in listed.get("views", [])
+        for annotation in view.get("annotations", [])
+        if annotation.get("id")
+    }
+    prepared = []
+    seen = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            raise InvalidParameterError("each annotation update must be an object")
+        identifier = update.get("id")
+        if not isinstance(identifier, str) or identifier not in by_id:
+            raise SelectionError(
+                "annotation id is missing or stale",
+                annotation_id=identifier,
+                hint="Refresh the IDs with list_drawing_annotations.",
+            )
+        if identifier in seen:
+            raise InvalidParameterError("an annotation id may appear only once per batch")
+        seen.add(identifier)
+        view_name, info = by_id[identifier]
+        kind = info.get("type")
+        allowed = {"id", "position_mm"}
+        allowed |= {"text", "height_mm"} if kind == "note" else {"prefix", "suffix"}
+        if kind not in ("note", "dimension"):
+            raise InvalidParameterError(
+                f"batch editing does not support {kind!r} annotations",
+                annotation_id=identifier,
+            )
+        extra = set(update) - allowed
+        if extra:
+            raise InvalidParameterError(
+                "fields do not apply to this annotation type",
+                annotation_id=identifier,
+                fields=sorted(extra),
+            )
+        if not any(key in update for key in allowed - {"id"}):
+            raise InvalidParameterError(
+                "each update needs text, prefix/suffix, height_mm or position_mm",
+                annotation_id=identifier,
+            )
+        if "position_mm" in update and (
+            not isinstance(update["position_mm"], (list, tuple))
+            or len(update["position_mm"]) != 2
+        ):
+            raise InvalidParameterError(
+                "position_mm must contain [x_mm, y_mm]",
+                annotation_id=identifier,
+            )
+        if "height_mm" in update and float(update["height_mm"]) <= 0:
+            raise InvalidParameterError(
+                "height_mm must be positive", annotation_id=identifier
+            )
+        if any(update.get(key) is None for key in ("text", "prefix", "suffix") if key in update):
+            raise InvalidParameterError(
+                "annotation text, prefix and suffix values must be strings",
+                annotation_id=identifier,
+            )
+        view = _named_view(doc, view_name)
+        annotation = _annotation_at(view, int(info["index"]))
+        prepared.append(
+            {
+                "id": identifier,
+                "view": view_name,
+                "index": int(info["index"]),
+                "kind": kind,
+                "update": update,
+                "annotation": annotation,
+                "snapshot": _annotation_snapshot(annotation, kind),
+            }
+        )
+    snapshots = [item["snapshot"] for item in prepared]
+    results = []
+    session.clear_selection(doc)
+    try:
+        for item in prepared:
+            update = item["update"]
+            annotation = item["annotation"]
+            record = {
+                "id": item["id"],
+                "view": item["view"],
+                "index": item["index"],
+                "type": item["kind"],
+            }
+            if "position_mm" in update:
+                x_mm, y_mm = map(float, update["position_mm"])
+                annotation.SetPosition(units.mm_to_m(x_mm), units.mm_to_m(y_mm), 0.0)
+                measured = [
+                    float(value) for value in binding.value(annotation.GetPosition()) or []
+                ]
+                if len(measured) < 2 or any(
+                    abs(measured[index] - units.mm_to_m(expected)) > units.mm_to_m(0.1)
+                    for index, expected in enumerate((x_mm, y_mm))
+                ):
+                    raise VerificationError(
+                        "SOLIDWORKS did not retain a batch annotation position",
+                        annotation_id=item["id"],
+                        requested_mm=[x_mm, y_mm],
+                    )
+                record["position_mm"] = [
+                    round(units.m_to_mm(value), 3) for value in measured[:2]
+                ]
+            if item["kind"] == "note":
+                note = binding.wrap(annotation.GetSpecificAnnotation(), "INote")
+                if "text" in update:
+                    note.SetText(str(update["text"]))
+                    measured_text = str(binding.value(note.GetText) or "")
+                    if measured_text != str(update["text"]):
+                        raise VerificationError(
+                            "SOLIDWORKS did not retain a batch note text",
+                            annotation_id=item["id"],
+                            measured=measured_text,
+                        )
+                    record["text"] = measured_text
+                if "height_mm" in update:
+                    text_format = binding.wrap(note.GetTextFormat(), "ITextFormat")
+                    text_format.CharHeight = units.mm_to_m(float(update["height_mm"]))
+                    note.SetTextFormat(0, text_format)
+                    measured_height = float(
+                        binding.value(
+                            binding.wrap(note.GetTextFormat(), "ITextFormat").CharHeight
+                        )
+                    )
+                    if abs(measured_height - units.mm_to_m(float(update["height_mm"]))) > units.mm_to_m(0.01):
+                        raise VerificationError(
+                            "SOLIDWORKS did not retain a batch note height",
+                            annotation_id=item["id"],
+                        )
+                    record["height_mm"] = round(units.m_to_mm(measured_height), 3)
+            else:
+                dimension = binding.wrap(
+                    annotation.GetSpecificAnnotation(), "IDisplayDimension"
+                )
+                for field, slot in (("prefix", 1), ("suffix", 2)):
+                    if field not in update:
+                        continue
+                    value = str(update[field])
+                    dimension.SetText(slot, value)
+                    measured_text = str(binding.value(dimension.GetText(slot)) or "")
+                    if measured_text != value:
+                        raise VerificationError(
+                            f"SOLIDWORKS did not retain a batch dimension {field}",
+                            annotation_id=item["id"],
+                        )
+                    record[field] = measured_text
+            item["expected_snapshot"] = _annotation_snapshot(annotation, item["kind"])
+            results.append(record)
+        rebuilt = inspect.rebuild(doc)
+        if not rebuilt.get("ok") or rebuilt.get("whats_wrong", {}).get("count", 0):
+            raise VerificationError(
+                "the drawing did not rebuild cleanly after batch annotation edits",
+                whats_wrong=rebuilt.get("whats_wrong"),
+            )
+        if not all(_verify_annotation_snapshot(item["expected_snapshot"]) for item in prepared):
+            raise VerificationError("annotation values changed during the batch rebuild")
+    except Exception as exc:
+        rollback_error = None
+        try:
+            for snapshot in reversed(snapshots):
+                _restore_annotation_snapshot(snapshot)
+            rollback = inspect.rebuild(doc)
+            if not rollback.get("ok") or rollback.get("whats_wrong", {}).get("count", 0):
+                raise ComCallError("drawing did not rebuild cleanly after batch rollback")
+            if not all(_verify_annotation_snapshot(snapshot) for snapshot in snapshots):
+                raise ComCallError("batch annotation rollback read-back did not match")
+        except Exception as rollback_exc:
+            rollback_error = str(rollback_exc)
+        session.clear_selection(doc)
+        raise VerificationError(
+            "batch annotation update failed",
+            failure=str(exc),
+            rolled_back=rollback_error is None,
+            rollback_error=rollback_error,
+        ) from exc
+    session.clear_selection(doc)
+    addressed = {(item["view"], item["index"]) for item in prepared}
+    refreshed = list_annotations(sheet_name=active_sheet)
+    compact_readback = [
+        {"view": view["name"], **annotation}
+        for view in refreshed.get("views", [])
+        for annotation in view.get("annotations", [])
+        if (view["name"], annotation.get("index")) in addressed
+    ]
+    refreshed_ids = {(item["view"], item["index"]): item["id"] for item in compact_readback}
+    for record in results:
+        record["previous_id"] = record["id"]
+        record["id"] = refreshed_ids.get((record["view"], record["index"]))
+    return {
+        "data": {"updated": len(results), "annotations": results},
+        "evidence": {
+            "rebuild": rebuilt,
+            "annotations": compact_readback,
+        },
     }
 
 
@@ -3455,17 +3915,30 @@ def list_dimensions(view_name: str | None = None) -> dict:
     """
     _, doc, _ = session.active_doc(("drawing",))
     active_sheet = _sheet_name(_current_sheet(doc))
+    document_info = session.doc_info(doc)
+    document_ref = document_info.get("path") or document_info.get("title", "")
     views = []
     for view in _views(doc, active_sheet):
         name = _view_name(view)
         if view_name is not None and name != view_name:
             continue
-        dimensions = [
-            {"index": index, **_dimension_entry_info(annotation, display)}
-            for index, (annotation, display) in enumerate(
-                _view_dimension_entries(view)
+        dimensions = []
+        for index, (annotation, display) in enumerate(_view_dimension_entries(view)):
+            info = _dimension_entry_info(annotation, display)
+            identity = {
+                "type": "dimension",
+                "index": index,
+                **info,
+            }
+            dimensions.append(
+                {
+                    "index": index,
+                    **info,
+                    "id": _annotation_identifier(
+                        document_ref, active_sheet, name, identity
+                    ),
+                }
             )
-        ]
         views.append(
             {"name": name, "dimensions": dimensions, "count": len(dimensions)}
         )
@@ -3474,6 +3947,128 @@ def list_dimensions(view_name: str | None = None) -> dict:
         "total": sum(item["count"] for item in views),
         "sheet": active_sheet,
     }
+
+
+def audit_feature_coverage(
+    feature_names: set[str], dimensions: list[dict], coverage: list[dict]
+) -> dict:
+    """Audit explicit feature-to-dimension assignments without guessing intent."""
+    known_dimensions = {
+        str(item["id"]): item
+        for view in dimensions
+        for item in view.get("dimensions", [])
+        if item.get("id")
+    }
+    feature_refs = {}
+    invalid_features = []
+    for item in coverage:
+        feature_ref = str(item.get("feature_ref") or "").strip()
+        if not feature_ref or feature_ref not in feature_names:
+            invalid_features.append(feature_ref or None)
+            continue
+        feature_refs.setdefault(feature_ref, []).append(item)
+    duplicate_features = [
+        feature_ref for feature_ref, items in feature_refs.items() if len(items) > 1
+    ]
+    missing_features = []
+    unknown_dimensions = []
+    assignments = {}
+    normalized = []
+    for feature_ref, items in feature_refs.items():
+        for item in items:
+            dimension_ids = [str(value) for value in item.get("dimension_ids", [])]
+            valid_ids = []
+            for dimension_id in dimension_ids:
+                if dimension_id not in known_dimensions:
+                    unknown_dimensions.append(
+                        {"feature_ref": feature_ref, "dimension_id": dimension_id}
+                    )
+                    continue
+                valid_ids.append(dimension_id)
+                assignments.setdefault(dimension_id, []).append(feature_ref)
+            required = bool(item.get("required", True))
+            if required and not valid_ids:
+                missing_features.append(feature_ref)
+            normalized.append(
+                {
+                    "feature_ref": feature_ref,
+                    "required": required,
+                    "dimension_ids": valid_ids,
+                    "covered": bool(valid_ids),
+                }
+            )
+    duplicate_dimensions = [
+        {"dimension_id": dimension_id, "feature_refs": refs}
+        for dimension_id, refs in assignments.items()
+        if len(refs) > 1
+    ]
+    assigned = set(assignments)
+    unassigned_dimensions = sorted(set(known_dimensions) - assigned)
+    passed = not (
+        invalid_features or duplicate_features or missing_features
+        or unknown_dimensions or duplicate_dimensions
+    )
+    return {
+        "passed": passed,
+        "basis": "caller_supplied_feature_to_dimension_mapping",
+        "edge_count_used_as_feature_quantity": False,
+        "coverage": normalized,
+        "missing_required_features": sorted(set(missing_features)),
+        "unknown_feature_refs": invalid_features,
+        "duplicate_feature_refs": sorted(duplicate_features),
+        "unknown_dimension_ids": unknown_dimensions,
+        "duplicate_dimension_assignments": duplicate_dimensions,
+        "unassigned_dimension_ids": unassigned_dimensions,
+        "counts": {
+            "features_declared": len(coverage),
+            "features_covered": sum(item["covered"] for item in normalized),
+            "dimensions_available": len(known_dimensions),
+            "dimensions_assigned": len(assigned),
+        },
+    }
+
+
+def audit_feature_dimension_coverage(coverage: list[dict]) -> dict:
+    """Check caller-declared design-critical feature coverage on the drawing."""
+    if not isinstance(coverage, list) or not coverage:
+        raise InvalidParameterError("coverage must be a non-empty array")
+    for index, item in enumerate(coverage):
+        if not isinstance(item, dict) or not isinstance(item.get("dimension_ids"), list):
+            raise InvalidParameterError(
+                "each coverage item must have feature_ref and dimension_ids",
+                index=index,
+            )
+    _, doc, _ = session.active_doc(("drawing",))
+    active_sheet = _sheet_name(_current_sheet(doc))
+    references = {
+        (info.get("model_reference"), info.get("configuration"))
+        for info in (_view_info(view) for view in _views(doc, active_sheet))
+        if info.get("model_reference")
+    }
+    if len(references) != 1:
+        raise SelectionError(
+            "feature coverage requires one model/configuration on the active sheet",
+            references=sorted(references, key=str),
+        )
+    reference, configuration = next(iter(references))
+    if not configuration:
+        raise VerificationError("feature coverage requires verified view configuration readback")
+    source = _model_reference_record(session.app(), reference, configuration)
+    model_features = session.list_feature_infos(source["document"])
+    feature_names = {
+        str(item.get("name")) for item in model_features if item.get("name")
+    }
+    dimensions = list_dimensions().get("views", [])
+    result = audit_feature_coverage(feature_names, dimensions, coverage)
+    result["drawing_sheet"] = active_sheet
+    result["model_reference"] = source["reference"]
+    result["configuration"] = source["configuration"]
+    result["note"] = (
+        "This checks the supplied feature-to-dimension mapping. It cannot "
+        "infer design intent or prove that a listed dimension functionally "
+        "controls the feature."
+    )
+    return result
 
 
 def plan_tolerance(
@@ -3656,12 +4251,12 @@ def insert_general_tolerance_table(
     x: int | None = None,
     y: int | None = None,
 ) -> dict:
-    """Insert the general tolerance table (ISO 2768-mK) where supported.
+    """Insert the installed general tolerance table where supported.
 
     ``InsertGeneralToleranceTableAnnotation(TemplateName, X, Y)`` takes long
     coordinates; the default template is used. Measured on SW2026 SP0.0 the
     annotation only exists for parts/assemblies, so a drawing can legitimately
-    refuse it and callers should fall back to a general tolerance note.
+    refuse it. A note requires a confirmed applicable standard and class.
     """
     _, doc, _ = session.active_doc(("drawing",))
     _drawing(doc)
@@ -3672,8 +4267,8 @@ def insert_general_tolerance_table(
         raise ComCallError(
             "SOLIDWORKS did not insert a general tolerance table",
             hint="Measured on SW2026 SP0.0: this annotation is available for "
-            "parts/assemblies through the API; on a drawing add a "
-            "'General tolerances ISO 2768-mK' note instead.",
+            "parts/assemblies through the API. Use a drawing note only after "
+            "the applicable tolerance standard and class are confirmed.",
         )
     table = binding.wrap(raw, "IGeneralToleranceTableAnnotation")
     feature_name = None
@@ -4296,9 +4891,15 @@ def insert_surface_finish(
 def _view_referenced_configuration(view) -> str:
     """Resolve the configuration a BOM table must reference.
 
-    ``IView.ReferencedConfiguration`` is PROPPUT-only on this build, so read
-    the referenced model document's active configuration instead.
+    Prefer the view's actual configuration, which reads back on the live
+    34.0 target despite the earlier typelib-only probe suggesting otherwise.
     """
+    try:
+        name = str(binding.value(view.ReferencedConfiguration) or "")
+        if name:
+            return name
+    except Exception:
+        pass
     try:
         model_path = str(binding.value(view.GetReferencedModelName) or "")
     except Exception:
@@ -4312,19 +4913,11 @@ def _view_referenced_configuration(view) -> str:
         if model_path and path.lower() != model_path.lower():
             continue
         try:
-            manager = candidate.ConfigurationManager
-            active = binding.wrap(manager.ActiveConfiguration, "IConfiguration")
-            name = str(binding.value(active.Name) or "")
-            if name:
-                return name
-        except Exception:
-            pass
-        try:
             names = [
                 str(name)
                 for name in binding.value(candidate.GetConfigurationNames()) or []
             ]
-            if names:
+            if len(names) == 1:
                 return names[0]
         except Exception:
             pass
@@ -4367,6 +4960,11 @@ def insert_bom_table(
     config = str(configuration) if configuration is not None else ""
     if not config:
         config = _view_referenced_configuration(view)
+    if not config:
+        raise VerificationError(
+            "the BOM view configuration could not be verified",
+            hint="Pass an explicit configuration after checking the drawing view.",
+        )
     raw = view.InsertBomTable5(
         True,
         0.0,

@@ -466,7 +466,8 @@ async def standard_views(client: Client) -> dict:
 
     inserted = await client.call(
         "drawing_insert_standard_views",
-        model=str(PART),
+        model_reference=str(PART),
+        configuration="Default",
         front_mm=list(FRONT_POS),
         scale=1.0,
         projection="first_angle",
@@ -561,7 +562,10 @@ async def standard_views(client: Client) -> dict:
             y_mm=fy,
         )
 
-    iso = await client.data("drawing_insert_view", view="isometric", x_mm=ISO_POS[0], y_mm=ISO_POS[1], model=str(PART))
+    iso = await client.data(
+        "drawing_insert_view", view="isometric", x_mm=ISO_POS[0], y_mm=ISO_POS[1],
+        model_reference=str(PART), configuration="Default"
+    )
     iso_name = iso.get("name")
     if iso_name:
         placed = await client.call("drawing_set_view", name=iso_name, x_mm=ISO_POS[0], y_mm=ISO_POS[1], scale=ISO_SCALE)
@@ -876,7 +880,7 @@ async def apply_annotations(client: Client, views: dict, dims: dict) -> None:
         "drawing_add_note",
         text=(
             "UNLESS OTHERWISE SPECIFIED:\n"
-            "GENERAL TOLERANCES ISO 2768-mK\n"
+            "REVIEW: GENERAL TOLERANCES UNCONFIRMED\n"
             "DEBURR AND BREAK SHARP EDGES"
         ),
         x_mm=12.0,

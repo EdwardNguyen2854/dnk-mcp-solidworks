@@ -20,6 +20,16 @@ SEGMENT_TYPES = {
     7: "text",
 }
 
+SKETCH_CONSTRAINT_STATUS = {
+    1: "unknown_constraint",
+    2: "under_constrained",
+    3: "fully_constrained",
+    4: "over_constrained",
+    5: "no_solution",
+    6: "invalid_solution",
+    7: "autosolve_off",
+}
+
 # swSketchTrimChoice_e, measured off swconst.tlb (34.0).
 TRIM_CHOICES = {
     "closest": 0,
@@ -438,6 +448,48 @@ def _segment_point(segment) -> tuple[float, float, float]:
     raise SelectionError("could not locate a point on the sketch segment")
 
 
+def _sketch_diagnostics(sketch) -> dict:
+    diagnostics = {
+        "remaining_degrees_of_freedom": None,
+        "degrees_of_freedom_status": "not_exposed_by_ISketch_typelib",
+        "source_plane": None,
+    }
+    try:
+        status = int(sketch.GetConstrainedStatus())
+        diagnostics["constrained_status"] = status
+        diagnostics["constraint_state"] = SKETCH_CONSTRAINT_STATUS.get(
+            status, "unknown_status"
+        )
+        diagnostics["under_constrained"] = status == 2
+        diagnostics["fully_constrained"] = status == 3
+        diagnostics["over_constrained"] = status == 4
+    except Exception:
+        diagnostics["constrained_status"] = None
+        diagnostics["constraint_state"] = "unavailable"
+    try:
+        raw = binding.value(sketch.ModelToSketchTransform)
+        if raw is not None:
+            transform = binding.wrap(raw, "IMathTransform")
+            values = [float(value) for value in binding.value(transform.ArrayData)]
+            record = {
+                "array_data": values,
+                "units": "rotation dimensionless; translation mm; scale dimensionless",
+                "array_convention": "SOLIDWORKS IMathTransform ArrayData",
+            }
+            if len(values) >= 13:
+                record["rotation_3x3"] = [values[index:index + 3] for index in (0, 3, 6)]
+                record["translation_mm"] = [
+                    round(units.m_to_mm(value), 6) for value in values[9:12]
+                ]
+                record["scale"] = values[12]
+            diagnostics["source_plane_transform"] = record
+    except Exception as exc:
+        diagnostics["source_plane_transform_status"] = (
+            f"unavailable: {type(exc).__name__}: {exc}"
+        )
+    return diagnostics
+
+
 def list_sketches() -> dict:
     """List every sketch feature; read-only feed for edit_sketch and selection."""
     _, doc, _ = session.active_doc(("part", "drawing"))
@@ -453,7 +505,7 @@ def list_sketches() -> dict:
         try:
             sketch = binding.wrap(feature.GetSpecificFeature2(), "ISketch")
             info["segments"] = len(_wrap_segments(sketch.GetSketchSegments()))
-            info["constrained_status"] = int(sketch.GetConstrainedStatus())
+            info.update(_sketch_diagnostics(sketch))
         except Exception:
             pass
         sketches.append(info)
@@ -508,14 +560,10 @@ def list_sketch_segments() -> dict:
         except Exception:
             pass
         infos.append(info)
-    try:
-        status = int(sketch.GetConstrainedStatus())
-    except Exception:
-        status = None
     return {
         "segments": infos,
         "segment_count": len(infos),
-        "constrained_status": status,
+        **_sketch_diagnostics(sketch),
     }
 
 

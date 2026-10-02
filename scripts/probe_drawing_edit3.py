@@ -53,7 +53,11 @@ def main() -> int:
     application = session.app()
     created: list[str] = []
     documents.new_document("part")
-    created.append(str(binding.value(session.active_doc(("part",))[1].GetTitle)))
+    part_doc = session.active_doc(("part",))[1]
+    part_info = session.doc_info(part_doc)
+    model_reference = part_info.get("path") or part_info["title"]
+    configuration = part_info.get("active_configuration") or "Default"
+    created.append(part_info["title"])
     sketch.create_sketch("Front Plane")
     sketch.rectangle(0.0, 0.0, 120.0, 80.0)
     sketch.circle(30.0, 40.0, 5.0)
@@ -63,7 +67,7 @@ def main() -> int:
     drawings.create_drawing(paper_size="A3", scale=1.0, first_angle=True)
     doc = session.active_doc(("drawing",))[1]
     created.insert(0, str(binding.value(doc.GetTitle)))
-    drawings.insert_standard_views()
+    drawings.insert_standard_views(model_reference, configuration)
 
     drawings.add_note("EDIT ME", 180.0, 230.0)
     note_annotation = None

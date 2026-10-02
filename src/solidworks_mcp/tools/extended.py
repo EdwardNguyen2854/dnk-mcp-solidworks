@@ -117,19 +117,33 @@ def list_bodies(args: dict) -> dict:
 
 @registry.tool(
     "fillet",
-    "Round the selected edges. Indices come from list_edges.",
+    "Round the selected edges (kind=constant, indices from list_edges) or "
+    "blend between two faces (kind=face, two face_indices that meet at the "
+    "edge).",
     obj(
         {
             "radius_mm": number("fillet radius (mm)", exclusiveMinimum=0),
+            "kind": string(
+                "fillet kind",
+                enum=["constant", "face"],
+                default="constant",
+            ),
             "edge_indices": array(
-                "edge indices from list_edges", {"type": "integer"}
+                "edge indices from list_edges (kind=constant)",
+                {"type": "integer"},
+                default=None,
+            ),
+            "face_indices": array(
+                "exactly two face indices from list_faces (kind=face)",
+                {"type": "integer"},
+                default=None,
             ),
             "propagate": boolean(
                 "extend the fillet along tangent edges", default=True
             ),
             "name": string("feature name override", default=None),
         },
-        required=("radius_mm", "edge_indices"),
+        required=("radius_mm",),
     ),
     tier="extended",
     tags=("features",),
@@ -139,9 +153,11 @@ def fillet(args: dict) -> dict:
         checkpoint.maybe_auto_checkpoint()
         return features.fillet(
             args["radius_mm"],
-            args["edge_indices"],
+            args.get("edge_indices"),
             args.get("propagate", True),
             args.get("name"),
+            args.get("kind", "constant"),
+            args.get("face_indices"),
         )
 
     return envelope(run(job))
@@ -149,15 +165,25 @@ def fillet(args: dict) -> dict:
 
 @registry.tool(
     "chamfer",
-    "Chamfer the selected edges at equal distance and angle. Indices come "
-    "from list_edges.",
+    "Chamfer the selected edges. kind=equal is a 45-degree equal-distance "
+    "chamfer; kind=angle_distance uses distance_mm along the face and "
+    "angle_deg from it; kind=distance_distance uses distance_mm and "
+    "second_distance_mm. Indices come from list_edges.",
     obj(
         {
             "distance_mm": number("chamfer distance (mm)", exclusiveMinimum=0),
             "edge_indices": array(
                 "edge indices from list_edges", {"type": "integer"}
             ),
+            "kind": string(
+                "chamfer kind",
+                enum=["equal", "angle_distance", "distance_distance"],
+                default="equal",
+            ),
             "angle_deg": number("chamfer angle (degrees)", default=45),
+            "second_distance_mm": number(
+                "second distance (mm) for kind=distance_distance", default=None
+            ),
             "name": string("feature name override", default=None),
         },
         required=("distance_mm", "edge_indices"),
@@ -173,6 +199,8 @@ def chamfer(args: dict) -> dict:
             args["edge_indices"],
             args.get("angle_deg", 45),
             args.get("name"),
+            args.get("kind", "equal"),
+            args.get("second_distance_mm"),
         )
 
     return envelope(run(job))
@@ -765,7 +793,10 @@ def drawing_set_iso_units(args: dict) -> dict:
 
 @registry.tool(
     "drawing_insert_view",
-    "Insert a standard view of the model onto the active drawing sheet.",
+    "Insert a model view of an explicitly referenced open model and named "
+    "configuration. For a projection-based orthographic set, use this for the "
+    "single master view, then create every companion with "
+    "drawing_insert_projected_view from this view.",
     obj(
         {
             "view": string(
@@ -775,9 +806,10 @@ def drawing_set_iso_units(args: dict) -> dict:
             ),
             "x_mm": number("sheet x position (mm)", default=100),
             "y_mm": number("sheet y position (mm)", default=150),
-            "model": string("model path or title", default=None),
+            "model_reference": string("exact open model path or unique document title"),
+            "configuration": string("configuration to reference in the drawing view"),
         },
-        required=("view",),
+        required=("view", "model_reference", "configuration"),
     ),
     tier="extended",
     tags=("drawings",),
@@ -787,9 +819,10 @@ def drawing_insert_view(args: dict) -> dict:
         run(
             lambda: drawings.insert_model_view(
                 args["view"],
+                args["model_reference"],
+                args["configuration"],
                 args.get("x_mm", 100),
                 args.get("y_mm", 150),
-                args.get("model"),
             )
         )
     )
@@ -797,13 +830,17 @@ def drawing_insert_view(args: dict) -> dict:
 
 @registry.tool(
     "drawing_insert_standard_views",
-    "Insert front, top and right views onto the active drawing sheet using the "
-    "requested first- or third-angle layout. Views are set to the sheet scale "
-    "before insertion (SOLIDWORKS otherwise auto-scales each view), then the "
-    "top/right outlines are placed around the front outline with a clear gap.",
+    "Convenience batch: insert front, top and right views directly from the "
+    "referenced model using the requested first- or third-angle layout. This "
+    "does not create the latter views as projections. For the normal "
+    "projection-based workflow, insert one master with drawing_insert_view "
+    "and create companions from it with drawing_insert_projected_view. Use "
+    "this batch only when direct standard-view insertion is requested. Views "
+    "share the sheet scale and are laid out with a clear gap.",
     obj(
         {
-            "model": string("model path or title", default=None),
+            "model_reference": string("exact open model path or unique document title"),
+            "configuration": string("configuration to reference in each drawing view"),
             "front_mm": array(
                 "front view [x, y] on the sheet", {"type": "number"}, default=None
             ),
@@ -823,7 +860,8 @@ def drawing_insert_view(args: dict) -> dict:
                 enum=["first_angle", "third_angle"],
                 default="first_angle",
             ),
-        }
+        },
+        required=("model_reference", "configuration"),
     ),
     tier="extended",
     tags=("drawings",),
@@ -832,7 +870,8 @@ def drawing_insert_standard_views(args: dict) -> dict:
     return envelope(
         run(
             lambda: drawings.insert_standard_views(
-                args.get("model"),
+                args["model_reference"],
+                args["configuration"],
                 args.get("front_mm"),
                 args.get("gap_mm", 20),
                 args.get("projection", "first_angle"),
@@ -862,9 +901,9 @@ def list_drawing_views(args: dict) -> dict:
 @registry.tool(
     "drawing_insert_model_dimensions",
     "Import the model's own dimensions and annotations into the drawing "
-    "(Insert > Model Items). The model must carry driving dimensions. Note: on "
-    "SOLIDWORKS 2026 SP0.0 this API may import nothing; drawing_auto_dimension "
-    "is the reliable alternative.",
+    "(Insert > Model Items). The model must carry driving dimensions. The "
+    "tool inventories annotations before and after the API call and reports "
+    "the measured additions for this specific drawing.",
     obj(
         {
             "view": string(
@@ -1044,6 +1083,40 @@ def list_drawing_dimensions(args: dict) -> dict:
 
 
 @registry.tool(
+    "drawing_audit_feature_coverage",
+    "Audit an explicit feature-to-dimension coverage map. Feature refs come "
+    "from list_features and dimension IDs from list_drawing_dimensions. The "
+    "tool finds missing coverage, stale IDs, and duplicate assignments; it "
+    "does not infer functional intent from edge counts.",
+    obj(
+        {
+            "coverage": array(
+                "design-critical model features and the drawing dimension IDs "
+                "assigned to each feature",
+                {
+                    "type": "object",
+                    "properties": {
+                        "feature_ref": {"type": "string"},
+                        "dimension_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "required": {"type": "boolean", "default": True},
+                    },
+                    "required": ["feature_ref", "dimension_ids"],
+                },
+            )
+        },
+        required=("coverage",),
+    ),
+    tier="extended",
+    tags=("drawings", "dimensions", "inspect"),
+)
+def drawing_audit_feature_coverage(args: dict) -> dict:
+    return ok(run(lambda: drawings.audit_feature_dimension_coverage(args["coverage"])))
+
+
+@registry.tool(
     "drawing_set_dimension_tolerance",
     "Set one drawing dimension's tolerance (symmetric, bilateral, limits, "
     "min/max or an ISO fit) and verify the measured read-back. Dimension "
@@ -1101,10 +1174,10 @@ def drawing_set_dimension_tolerance(args: dict) -> dict:
 
 @registry.tool(
     "drawing_insert_general_tolerance_table",
-    "Insert the general tolerance table (default ISO 2768-mK class) into the "
+    "Insert the installed general tolerance table into the "
     "active document. Measured on SW2026 SP0.0: the annotation is available "
-    "for parts/assemblies through the API; on a drawing, add a 'General "
-    "tolerances ISO 2768-mK' note instead.",
+    "for parts/assemblies through the API. On a drawing, use a note only "
+    "when the design authority supplies the applicable standard and class.",
     obj(
         {
             "x": integer("table x position in API units", default=None),
@@ -1600,6 +1673,45 @@ def drawing_set_annotation_text(args: dict) -> dict:
 
 
 @registry.tool(
+    "drawing_update_annotations",
+    "Apply note or dimension text/position edits by IDs from "
+    "list_drawing_annotations. Resolves the whole batch before mutation, "
+    "rebuilds once, and restores saved values if any read-back or rebuild "
+    "fails.",
+    obj(
+        {
+            "updates": array(
+                "annotation changes; each id must come from the current "
+                "list_drawing_annotations result",
+                {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "text": {"type": "string"},
+                        "prefix": {"type": "string"},
+                        "suffix": {"type": "string"},
+                        "height_mm": {"type": "number", "exclusiveMinimum": 0},
+                        "position_mm": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "minItems": 2,
+                            "maxItems": 2,
+                        },
+                    },
+                    "required": ["id"],
+                },
+            )
+        },
+        required=("updates",),
+    ),
+    tier="extended",
+    tags=("drawings", "annotations"),
+)
+def drawing_update_annotations(args: dict) -> dict:
+    return envelope(run(lambda: drawings.update_annotations(args["updates"])))
+
+
+@registry.tool(
     "drawing_add_dimension",
     "Dimension picked view edges: one circular edge gives its diameter, two "
     "edges the distance between them. Edge indexes come from "
@@ -1722,8 +1834,9 @@ def drawing_manifest(args: dict) -> dict:
     "drawing_layout_audit",
     "Screen the active drawing's annotation layout: estimated text boxes, "
     "collisions (overlaps and near-misses) and off-frame items. Boxes are "
-    "estimated from the measured annotation position and character count, "
-    "not measured text bounds.",
+    "estimated from the measured annotation position and character count. "
+    "The default audits all returned text, including sheet-format and title-"
+    "block notes; raster review is still required.",
     obj(
         {
             "sheet": string("only audit this sheet", default=None),
@@ -1735,12 +1848,13 @@ def drawing_manifest(args: dict) -> dict:
                 "assumed text height for the estimate (mm)", default=3.5
             ),
             "inset_mm": number(
-                "frame border inset used for the frame box (mm)", default=10.0
+                "override the default measured ISO filing/frame inset (mm)",
+                default=None,
             ),
             "edge_band_mm": number(
-                "skip sheet-format decoration within this distance of the "
-                "sheet edges, 0 to audit everything (mm)",
-                default=12.0,
+                "explicitly skip text annotations within this distance of the "
+                "sheet edges; 0 audits the full sheet (mm)",
+                default=0.0,
             ),
         }
     ),
@@ -1754,8 +1868,8 @@ def drawing_layout_audit(args: dict) -> dict:
                 args.get("sheet"),
                 args.get("min_gap_mm", 2.0),
                 args.get("text_height_mm", 3.5),
-                args.get("inset_mm", 10.0),
-                args.get("edge_band_mm", 12.0),
+                args.get("inset_mm"),
+                args.get("edge_band_mm", 0.0),
             )
         )
     )
@@ -1998,19 +2112,22 @@ def drawing_set_view(args: dict) -> dict:
 
 @registry.tool(
     "drawing_insert_projected_view",
-    "Project a new view off an existing one, placed by direction and offset "
-    "or at an exact sheet point. The parent view is selected automatically "
-    "(measured requirement on SW2026 SP0.0); multiple projections per drawing "
-    "work. An earlier measurement found projections returning nothing once a "
-    "second sheet exists, so add them before extra sheets; for a full "
-    "orthographic set use drawing_insert_standard_views.",
+    "Project an orthographic companion from a named parent. Standard workflow: "
+    "insert one master with drawing_insert_view, then call this once per "
+    "companion, always passing that master's exact name as parent_view. "
+    "Direction is sheet placement, not the view-orientation name; use measured "
+    "sheet coordinates when needed and verify type, position and source. "
+    "SW2026 SP0.0 may omit projected orientation read-back, so confirm the "
+    "projection convention from the sheet setting, symbol and raster. Multiple "
+    "projections from one master work, but add them before additional sheets.",
     obj(
         {
             "parent_view": string(
-                "view to project from; first model view if omitted", default=None
+                "exact master view name to project from; pass explicitly", default=None
             ),
             "direction": string(
-                "placement direction", enum=["right", "left", "up", "down"],
+                "sheet placement direction relative to parent (not view orientation)",
+                enum=["right", "left", "up", "down"],
                 default="right",
             ),
             "offset_mm": number("distance from the parent (mm)", default=80),
@@ -2419,7 +2536,10 @@ def edit_sketch(args: dict) -> dict:
 @registry.tool(
     "simple_hole",
     "Drill a straight hole into a planar face. The hole centre is placed at "
-    "(x_mm, y_mm) in the sketch coordinates of that face.",
+    "(x_mm, y_mm) measured in millimetres from the face bounding-box minimum "
+    "corner along ascending model X/Y, independent of the face normal. The "
+    "point is checked against the trimmed face. This is geometry-only and "
+    "does not create native Hole Wizard callout data.",
     obj(
         {
             "diameter_mm": number("hole diameter (mm)", exclusiveMinimum=0),
@@ -2451,6 +2571,277 @@ def simple_hole(args: dict) -> dict:
             args.get("depth_mm", 10),
             args.get("end_condition", "blind"),
             args.get("reverse", False),
+            args.get("name"),
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
+    "thin_extrude",
+    "Thin-wall extrude of the sketch shown on screen: the profile is swept "
+    "as a wall of thickness_mm, on the outward, inward or mid side of it. "
+    "cut=true makes it a thin cut.",
+    obj(
+        {
+            "depth_mm": number("depth (mm); required for blind", default=None),
+            "end_condition": string(
+                "end condition", enum=["blind", "through_all"], default="blind"
+            ),
+            "thickness_mm": number("wall thickness (mm)", exclusiveMinimum=0, default=1),
+            "side": string(
+                "which side of the profile the wall sits on",
+                enum=["outward", "inward", "mid"],
+                default="mid",
+            ),
+            "cut": boolean("cut instead of boss", default=False),
+            "reverse": boolean("flip the direction", default=False),
+            "name": string("feature name override", default=None),
+        },
+        required=("thickness_mm",),
+    ),
+    tier="extended",
+    tags=("features",),
+)
+def thin_extrude(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.thin_extrude(
+            depth_mm=args.get("depth_mm"),
+            end_condition=args.get("end_condition", "blind"),
+            thickness_mm=args.get("thickness_mm", 1),
+            side=args.get("side", "mid"),
+            cut=args.get("cut", False),
+            reverse=args.get("reverse", False),
+            name=args.get("name"),
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
+    "counterbore_hole",
+    "Drill a counterbore: the counterbore diameter to counterbore_depth_mm, "
+    "the pilot diameter on to the full depth. The centre is placed at "
+    "(x_mm, y_mm) on the planar face (measured from its minimum corner). "
+    "The feature is two geometry-only cuts, not a native Hole Wizard feature; "
+    "failure of the second cut rolls back the pilot and verifies the model fingerprint.",
+    obj(
+        {
+            "diameter_mm": number("pilot diameter (mm)", exclusiveMinimum=0),
+            "counterbore_diameter_mm": number(
+                "counterbore diameter (mm)", exclusiveMinimum=0
+            ),
+            "counterbore_depth_mm": number(
+                "counterbore depth (mm)", exclusiveMinimum=0
+            ),
+            "face_index": integer("planar face index from list_faces"),
+            "x_mm": number("hole centre x on the face (mm)"),
+            "y_mm": number("hole centre y on the face (mm)"),
+            "depth_mm": number("pilot depth for blind holes (mm)", default=10),
+            "end_condition": string(
+                "end condition",
+                enum=["blind", "through_all", "up_to_next"],
+                default="blind",
+            ),
+            "name": string("feature name override", default=None),
+        },
+        required=(
+            "diameter_mm",
+            "counterbore_diameter_mm",
+            "counterbore_depth_mm",
+            "face_index",
+            "x_mm",
+            "y_mm",
+        ),
+    ),
+    tier="extended",
+    tags=("features",),
+)
+def counterbore_hole(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.counterbore_hole(
+            args["diameter_mm"],
+            args["counterbore_diameter_mm"],
+            args["counterbore_depth_mm"],
+            args["face_index"],
+            args["x_mm"],
+            args["y_mm"],
+            args.get("depth_mm", 10),
+            args.get("end_condition", "blind"),
+            args.get("name"),
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
+    "countersink_hole",
+    "Drill a pilot hole and countersink its top edge at the given included "
+    "angle (default 90 degrees). The centre is placed at (x_mm, y_mm) on the "
+    "planar face (measured from its minimum corner). It is geometry-only and "
+    "does not create native Hole Wizard callout data.",
+    obj(
+        {
+            "diameter_mm": number("pilot diameter (mm)", exclusiveMinimum=0),
+            "countersink_diameter_mm": number(
+                "countersink diameter at the face (mm)", exclusiveMinimum=0
+            ),
+            "face_index": integer("planar face index from list_faces"),
+            "x_mm": number("hole centre x on the face (mm)"),
+            "y_mm": number("hole centre y on the face (mm)"),
+            "angle_deg": number("countersink included angle (degrees)", default=90),
+            "depth_mm": number("pilot depth for blind holes (mm)", default=10),
+            "end_condition": string(
+                "end condition",
+                enum=["blind", "through_all", "up_to_next"],
+                default="blind",
+            ),
+            "name": string("feature name override", default=None),
+        },
+        required=(
+            "diameter_mm",
+            "countersink_diameter_mm",
+            "face_index",
+            "x_mm",
+            "y_mm",
+        ),
+    ),
+    tier="extended",
+    tags=("features",),
+)
+def countersink_hole(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.countersink_hole(
+            args["diameter_mm"],
+            args["countersink_diameter_mm"],
+            args["face_index"],
+            args["x_mm"],
+            args["y_mm"],
+            args.get("angle_deg", 90),
+            args.get("depth_mm", 10),
+            args.get("end_condition", "blind"),
+            args.get("name"),
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
+    "tapped_hole",
+    "Drill a tap-drill hole and attach a cosmetic thread. The drill diameter "
+    "defaults to diameter - pitch; the thread is cosmetic, so the geometry is "
+    "the drilled hole. It does not create native Hole Wizard callout data.",
+    obj(
+        {
+            "diameter_mm": number("nominal thread diameter (mm)", exclusiveMinimum=0),
+            "pitch_mm": number("thread pitch (mm)", exclusiveMinimum=0),
+            "face_index": integer("planar face index from list_faces"),
+            "x_mm": number("hole centre x on the face (mm)"),
+            "y_mm": number("hole centre y on the face (mm)"),
+            "depth_mm": number("drill depth for blind holes (mm)", default=10),
+            "end_condition": string(
+                "end condition",
+                enum=["blind", "through_all", "up_to_next"],
+                default="blind",
+            ),
+            "drill_diameter_mm": number(
+                "explicit tap-drill diameter (mm)", default=None
+            ),
+            "note": string("thread callout note (default M<diameter>x<pitch>)", default=None),
+            "name": string("feature name override", default=None),
+        },
+        required=("diameter_mm", "pitch_mm", "face_index", "x_mm", "y_mm"),
+    ),
+    tier="extended",
+    tags=("features",),
+)
+def tapped_hole(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.tapped_hole(
+            args["diameter_mm"],
+            args["pitch_mm"],
+            args["face_index"],
+            args["x_mm"],
+            args["y_mm"],
+            args.get("depth_mm", 10),
+            args.get("end_condition", "blind"),
+            args.get("drill_diameter_mm"),
+            args.get("note"),
+            args.get("name"),
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
+    "cosmetic_thread",
+    "Attach a cosmetic thread to one circular edge (a hole or a shaft). The "
+    "diameter defaults to the edge's own diameter; pass it explicitly for a "
+    "tapped hole's nominal size. The feature adds no geometry; the result "
+    "carries the measured read-back.",
+    obj(
+        {
+            "edge_index": integer("circular edge index from list_edges"),
+            "depth_mm": number(
+                "thread depth for a blind thread (mm)", default=None
+            ),
+            "diameter_mm": number(
+                "thread diameter; default: from the edge", default=None
+            ),
+            "through": boolean("thread runs through the feature", default=False),
+            "note": string("thread callout note, e.g. M6x1", default=""),
+            "name": string("feature name override", default=None),
+        },
+        required=("edge_index",),
+    ),
+    tier="extended",
+    tags=("features",),
+)
+def cosmetic_thread(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.cosmetic_thread(
+            args["edge_index"],
+            args.get("depth_mm"),
+            args.get("diameter_mm"),
+            args.get("through", False),
+            args.get("note", ""),
+            args.get("name"),
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
+    "dome",
+    "Dome a planar face by height_mm. On a circular face the added volume is "
+    "a spherical cap; InsertDome returns nothing, so the result is judged by "
+    "the feature tree and measured mass properties.",
+    obj(
+        {
+            "height_mm": number("dome height (mm)", exclusiveMinimum=0),
+            "face_index": integer("planar face index from list_faces"),
+            "reverse": boolean("dome the other way", default=False),
+            "elliptic": boolean("elliptical dome", default=False),
+            "name": string("feature name override", default=None),
+        },
+        required=("height_mm", "face_index"),
+    ),
+    tier="extended",
+    tags=("features",),
+)
+def dome(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.dome(
+            args["height_mm"],
+            args["face_index"],
+            args.get("reverse", False),
+            args.get("elliptic", False),
             args.get("name"),
         )
 

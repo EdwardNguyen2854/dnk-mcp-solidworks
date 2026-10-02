@@ -26,6 +26,26 @@ solidworks-mcp-core = "solidworks_mcp.server:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.data-files]
+"share/solidworks-mcp-core/skills/cad-house-standard" = [
+  "skills/cad-house-standard/SKILL.md",
+]
+"share/solidworks-mcp-core/skills/cad-remodel" = [
+  "skills/cad-remodel/SKILL.md",
+]
+"share/solidworks-mcp-core/skills/drawing-acceptance" = [
+  "skills/drawing-acceptance/SKILL.md",
+]
+"share/solidworks-mcp-core/skills/image-assisted-modeling" = [
+  "skills/image-assisted-modeling/SKILL.md",
+]
+"share/solidworks-mcp-core/skills/iso-engineering-drawing" = [
+  "skills/iso-engineering-drawing/SKILL.md",
+]
+"share/solidworks-mcp-core/skills/sheet-layout" = [
+  "skills/sheet-layout/SKILL.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

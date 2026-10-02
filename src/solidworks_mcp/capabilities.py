@@ -15,19 +15,28 @@ DOMAINS = {
     "rectangles, polygons, splines, slots, points; relations, dimensions with "
     "read-back and re-drive, offset, convert, trim, fillet, chamfer, mirror, "
     "construction toggle, sketch re-editing",
-    "features": "boss/cut extrude, revolve, fillet, chamfer, shell, simple "
-    "holes, draft, sweep, loft, feature suppression, reference planes and "
-    "axes, linear/circular patterns, mirror",
-    "inspection": "mass properties, bounding box, feature/face/edge/body/"
-    "vertex listings, point and face measurement, What's Wrong",
-    "export": "STEP, IGES, STL, 3MF, Parasolid, PDF, DXF, DWG; screenshots; "
+    "features": "boss/cut extrude (blind, through, up-to-surface/vertex/body, "
+    "offset-from-surface), thin extrudes, revolve and revolve cut, fillet "
+    "(constant and face), chamfer (equal, angle-distance, distance-distance), "
+    "shell, simple/counterbore/countersink/tapped holes, cosmetic threads, "
+    "dome, draft, sweep, loft, suppression, reference planes and axes, "
+    "linear/circular patterns, mirror",
+    "inspection": "typed-accuracy mass properties, exact body extrema, "
+    "caller-tolerance model geometry comparison, feature definitions, "
+    "feature/face/edge/body/vertex listings, point and face measurement, "
+    "engineer-selection capture as revalidated entity references "
+    "(persist reference plus geometric fingerprint) with viewport highlight, "
+    "What's Wrong",
+    "export": "STEP, IGES, STL, 3MF, Parasolid, PDF, DXF, DWG; SOLIDWORKS "
+    "screenshots; local PNG/JPEG reference images returned as image content; "
     "structural export verification",
     "transactions": "file checkpoints and rollback",
     "assemblies": "components, origin placement, planar-face mates with "
     "read-back, fix/float, interference detection, bounding box",
-    "drawings": "ISO metric drawing profile, framed sheets, standard views, "
-    "millimetre unit verification, model dimensions, auto-dimension, notes, "
-    "custom properties, manifests, release validation, PDF/DXF export",
+    "drawings": "ISO metric review profile, explicit model/configuration views, "
+    "framed sheets, millimetre unit verification, model dimensions, feature "
+    "coverage audit, typed batch annotation updates, full-sheet layout audit, "
+    "notes, custom properties, manifests, release validation, PDF/DXF export",
 }
 
 
@@ -80,4 +89,17 @@ def collect() -> dict:
             "operation_timeout_sec": config.operation_timeout_sec,
         },
         "domains": DOMAINS,
+        "feature_guards": {
+            "native_hole_wizard": {
+                "available": False,
+                "status": "withheld_pending_safe_live_acceptance",
+                "target_revision": "34.0.0 (SOLIDWORKS 2026 SP0.0)",
+                "reason": (
+                    "The opt-in HoleWizard5 probe crashed in mfc140u.dll on "
+                    "this target build; do not call until a safe acceptance "
+                    "path is established. Current compound-hole tools report "
+                    "geometry-only semantics and no native hole callout."
+                ),
+            }
+        },
     }

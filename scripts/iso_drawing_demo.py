@@ -238,7 +238,11 @@ async def build_drawing(client: Client) -> dict:
         json.dumps({"paper": sheets.get("paper_size"), "size": sheets.get("size_mm")}),
     )
 
-    inserted = await client.call("drawing_insert_standard_views", model=str(PART))
+    inserted = await client.call(
+        "drawing_insert_standard_views",
+        model_reference=str(PART),
+        configuration="Default",
+    )
     layout = inserted.get("data", {}).get("layout", {})
     front_box = layout.get("front", {}).get("outline_mm", {})
     top_box = layout.get("top", {}).get("outline_mm", {})
@@ -673,7 +677,7 @@ async def apply_annotations(client: Client, dims: dict) -> None:
         "drawing_add_note",
         text=(
             "UNLESS OTHERWISE SPECIFIED:\n"
-            "GENERAL TOLERANCES ISO 2768-mK\n"
+            "REVIEW: GENERAL TOLERANCES UNCONFIRMED\n"
             "DEBURR AND BREAK SHARP EDGES"
         ),
         x_mm=30.0,
@@ -719,7 +723,8 @@ async def apply_annotations(client: Client, dims: dict) -> None:
     )
 
     iso = await client.data(
-        "drawing_insert_view", view="isometric", x_mm=95.0, y_mm=62.0, model=str(PART)
+        "drawing_insert_view", view="isometric", x_mm=95.0, y_mm=62.0,
+        model_reference=str(PART), configuration="Default"
     )
     iso_name = iso.get("name")
     check("isometric view inserted", bool(iso_name), str(iso_name))

@@ -1,0 +1,28 @@
+dnk-mcp-solidworks
+Copyright 2026 Edward Nguyen
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+Attribution requirement
+-----------------------
+Apache-2.0 requires you to keep this NOTICE file and the LICENSE file with every
+copy, fork, and redistribution, and to retain the copyright, attribution, and
+license notices. Modified files must carry a prominent notice stating that you
+changed them. This is how the original author, Edward Nguyen, is credited.
+
+We additionally ask that any public fork or derivative work visibly credits
+Edward Nguyen and links back to the original repository in its README,
+documentation, or "About" screen.
+
+Name of the original project: dnk-mcp-solidworks
+Original repository: https://github.com/EdwardNguyen2854/dnk-mcp-solidworks
+
+Third-party notices
+-------------------
+This project is a clean-room implementation. It studies public open-source
+projects and adopts their documented patterns; no source code was copied
+verbatim. See THIRD_PARTY_NOTICES.md for the attribution list and licenses of
+the projects whose ideas informed this work.
+
+SOLIDWORKS is a trademark of Dassault Systèmes. This project is not affiliated
+with or endorsed by Dassault Systèmes.

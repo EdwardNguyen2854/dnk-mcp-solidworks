@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a new tool, workflow, or capability.
+title: "[feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the engineering workflow first. The tool surface is typed and
+        fixed, so a request for a generic COM-invoke escape hatch will be
+        declined.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and found no duplicate.
+          required: true
+        - label: This can be done through the documented SOLIDWORKS COM API.
+          required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Engineering workflow
+      description: What should the agent be able to do end to end?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool or change
+      description: Name, arguments (with `_mm`/`_deg` units), evidence returned, and failure modes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing tools, macros, or API calls that almost solve it.
+
+  - type: input
+    id: sw-version
+    attributes:
+      label: Target SOLIDWORKS version
+      placeholder: "2026 SP0.0"
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How should success be measured?
+      description: The hand calculation or measured evidence a live acceptance test should compare against.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

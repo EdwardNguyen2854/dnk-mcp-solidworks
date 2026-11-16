@@ -4,6 +4,18 @@ Windows-only MCP server driving a **running** SOLIDWORKS session over COM. It ne
 launches SOLIDWORKS, never runs arbitrary code, and never touches the network.
 Current test target: SOLIDWORKS 2026 SP0.0, typelib 34.0, Python 3.12.
 
+## Repository
+
+This is a public open-source project licensed under Apache-2.0 (Copyright 2026
+Edward Nguyen). Keep `LICENSE` and `NOTICE` intact and preserve the attribution
+requirement in `NOTICE` in every copy, fork, and distribution. Third-party
+attribution lives in `THIRD_PARTY_NOTICES.md`.
+
+Public docs are part of the deliverable. When behavior, setup, tool counts, or
+paths change, update `README.md`, `CONTRIBUTING.md`, `scripts/README.md`,
+`CHANGELOG.md`, the relevant `docs/` page, and the bundled skills in the same
+change.
+
 ## Commands
 
 ```powershell

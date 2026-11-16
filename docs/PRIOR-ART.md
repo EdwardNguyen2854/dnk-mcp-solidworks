@@ -1,8 +1,8 @@
 # Prior art: the public SOLIDWORKS MCP servers
 
-This project is a private, best-of-class MCP server for SOLIDWORKS. It is a
-clean-room implementation: we study the public servers, take the best idea from
-each, and verify everything against the installed typelib before relying on it.
+This project is an open-source MCP server for SOLIDWORKS. It is a clean-room
+implementation: we study the public servers, take the best idea from each, and
+verify everything against the installed typelib before relying on it.
 Checking this file before designing a feature is part of the workflow — one of
 these projects has usually hit the same quirk already.
 

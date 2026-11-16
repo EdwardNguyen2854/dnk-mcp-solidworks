@@ -1,5 +1,8 @@
 # Third-party notices
 
+`dnk-mcp-solidworks` is Copyright 2026 Edward Nguyen and is licensed under the
+Apache License 2.0 (see `LICENSE` and `NOTICE`).
+
 This project is a clean-room implementation. It was designed by studying the
 following open-source projects and adopts their documented patterns and
 lessons; no source code was copied verbatim. Attribution is kept here because

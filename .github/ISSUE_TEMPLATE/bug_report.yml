@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a defect in the server, a tool, or the docs.
+title: "[bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not include confidential models or customer
+        paths. For security issues, use SECURITY.md instead of this form.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and found no duplicate.
+          required: true
+        - label: I am not reporting a security vulnerability.
+          required: true
+        - label: I saved my work before running live tests.
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: The actual behavior, including the full tool result envelope if available.
+      placeholder: "The tool returned ok=false with code ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact tool names, arguments, and order. Redact confidential paths.
+      placeholder: |
+        1. Start SOLIDWORKS ...
+        2. Call create_sketch ...
+        3. Call boss_extrude ...
+    validations:
+      required: true
+
+  - type: input
+    id: sw-version
+    attributes:
+      label: SOLIDWORKS version
+      placeholder: "2026 SP0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: typelib
+    attributes:
+      label: Typelib version (from get_capabilities)
+      placeholder: "34.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python and OS
+      placeholder: "3.12.4 on Windows 11 23H2"
+    validations:
+      required: true
+
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version / commit
+      placeholder: "0.5.0 (051b0b6)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: From %LOCALAPPDATA%\dnk-mcp-solidworks\server.log. Remove secrets and private paths.
+      render: text
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, document type, feature tree, or a minimal model that reproduces the issue.

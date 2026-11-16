@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software in academic work or a published project, please cite it as below."
+type: software
+title: "dnk-mcp-solidworks"
+abstract: "An open-source Model Context Protocol server that drives a running SOLIDWORKS session through its COM API, with measured evidence for every mutation."
+authors:
+  - family-names: Nguyen
+    given-names: Edward
+repository-code: "https://github.com/EdwardNguyen2854/dnk-mcp-solidworks"
+url: "https://github.com/EdwardNguyen2854/dnk-mcp-solidworks"
+license: Apache-2.0
+version: 0.5.0
+date-released: 2026-11-16
+keywords:
+  - model context protocol
+  - mcp
+  - solidworks
+  - cad
+  - com
+  - engineering automation

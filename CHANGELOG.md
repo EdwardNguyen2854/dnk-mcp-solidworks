@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Repository metadata is now public and installable: the package declares the
+  Apache-2.0 SPDX license, author, project URLs, keywords, and classifiers.
+  The README no longer describes the project as private.
+- One-off exploratory probes moved to `scripts/probes/`; the reusable typelib
+  inspector remains at `scripts/probe_api.py`. References in
+  `docs/COM-QUIRKS.md` and `docs/ROADMAP-3D-MODELLING.md` were updated.
+- `.gitignore` now also excludes `.work/`, editor folders, coverage output, and
+  environment files; `.editorconfig` and `.gitattributes` pin UTF-8 and LF.
 - Renamed the distribution and product identity to **dnk-mcp-solidworks**
   (`dnk-mcp-solidworks` console script, `solidworks-mcp-core` and
   `solidworks-mcp` kept as aliases). The Python import package remains
@@ -25,6 +33,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Public-release project files: Apache-2.0 `LICENSE`, `NOTICE` with the
+  attribution requirement, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
+  `SECURITY.md`, pull-request and issue templates, Dependabot, and a
+  Windows unit-test CI workflow.
+- `scripts/README.md` documenting every verification suite, demo, utility, and
+  exploratory probe.
 - Selection references for engineer-in-the-loop workflows: `get_selection`
   reads the engineer's current selection as bounded, labeled entity references;
   `resolve_entity_reference` revalidates them against the active document using

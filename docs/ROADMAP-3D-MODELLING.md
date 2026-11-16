@@ -97,7 +97,7 @@ mechanical parts.
 | `rib` | `InsertRib2` | one retry on this build while the probe session is open; stay withheld if unchanged |
 
 Acceptance: `scripts/acceptance_modelling_depth.py` runs 26 hand-calculated
-checks; `scripts/probe_feature_depth.py` and its follow-up probes retain the
+checks; `scripts/probes/probe_feature_depth.py` and its follow-up probes retain the
 measured marks/options for later SOLIDWORKS builds.
 
 ## Wave 2 — Multi-body and direct editing
@@ -150,7 +150,7 @@ selection access or definition modification was used. Local typelib inspection
 reports `swCombineBodiesOperationType_e`: Add=0, Subtract=1, Common=2, distinct
 from insertion-method `swBodyOperationType_e` codes Add=15903, Cut=15902,
 Intersect=15901. A controlled `ModifyDefinition` probe
-(`scripts/probe_combine_modify_definition.py`) tested the feature-data enum on a
+(`scripts/probes/probe_combine_modify_definition.py`) tested the feature-data enum on a
 known-good subtraction feature, changing only `OperationType` without selection
 access. Add=0 returned True and produced one body at 1800 mm3 expected/measured;
 Common=2 returned True and produced one body at 400 mm3 expected/measured. Both

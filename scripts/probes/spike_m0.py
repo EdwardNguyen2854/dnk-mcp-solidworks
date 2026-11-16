@@ -8,7 +8,7 @@ This proves the load-bearing assumptions before any server code is written:
   4. measured volume matches a hand calculation.
 
 Usage:
-    python scripts/spike_m0.py [--keep]
+    python scripts/probes/spike_m0.py [--keep]
 """
 from __future__ import annotations
 

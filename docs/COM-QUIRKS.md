@@ -524,12 +524,12 @@ the mitigation in this codebase.
 - Read-only typelib probe `python scripts/probe_api.py --enum
   swBodyOperationType_e` reports `SWBODYINTERSECT=15901`, `SWBODYCUT=15902`,
   `SWBODYADD=15903`, confirming (not disproving) the numeric `OPS` constants
-  in `scripts/probe_combine_bodies.py`. This validates enum values only; it does
+  in `scripts/probes/probe_combine_bodies.py`. This validates enum values only; it does
   not establish live operation success.
 - `IFeatureManager.InsertCombineFeature(OperationType, MainBody, ToolVar)` takes
   3 arguments; `ToolVar` is a `VARIANT` array of `IBody2` dispatches. Live probe
   on SOLIDWORKS 2026 SP0.0 / typelib 34.0 (2026-10-03), using the overlapping
-  rectangular-prism fixture in `scripts/probe_combine_bodies.py`, confirmed
+  rectangular-prism fixture in `scripts/probes/probe_combine_bodies.py`, confirmed
   subtraction only: `VT_ARRAY | VT_DISPATCH` built with
   `win32com.client.VARIANT` succeeded, while tuple/list did not. The larger
   prism (1200 mm3) as MainBody minus the 400 mm3 overlap produced one `Combine1`
@@ -544,7 +544,7 @@ the mitigation in this codebase.
   source bodies remained unchanged: body count 2, measured 2200 mm3 vs expected
   400 mm3 (+1800; fail). A clean rebuild / zero What's Wrong does **not** mean
   add/common succeeded. A follow-up isolated probe on SOLIDWORKS 2026 SP0.0 /
-  typelib 34.0 (2026-10-03), `scripts/probe_combine_isolated.py`, tested add and
+  typelib 34.0 (2026-10-03), `scripts/probes/probe_combine_isolated.py`, tested add and
   common once each in separate fresh scratch parts, using explicit MainBody plus
   one-element `VT_ARRAY | VT_DISPATCH` ToolVar and no preselection. Both calls
   returned no feature and added no feature-tree names. Each rebuild succeeded,
@@ -554,7 +554,7 @@ the mitigation in this codebase.
   a clean rebuild / zero What's Wrong still does not imply success. Investigate
   the API/operation contract further; at that probe stage the combine tool was
   withheld and add/common semantics were unresolved. A selected-body follow-up on 2026-10-03,
-  `scripts/probe_combine_selected_bodies.py`, selected both bodies with
+  `scripts/probes/probe_combine_selected_bodies.py`, selected both bodies with
   `inspect.select_bodies` before the same single typed-array call (explicit
   MainBody, no retry variants), once per operation in separate scratch parts.
   Both selections succeeded (2 bodies selected), but add and common again
@@ -562,7 +562,7 @@ the mitigation in this codebase.
   count was 0, and both source bodies remained unchanged (2 bodies, 2200 mm3).
   Add expected 1800 mm3 (+400; fail); common expected 400 mm3 (+1800; fail).
   Thus preselecting both bodies does not resolve either operation. A direct
-  interface probe, `scripts/probe_combine_direct_interface.py` (2026-10-03),
+  interface probe, `scripts/probes/probe_combine_direct_interface.py` (2026-10-03),
   wrapped `FeatureManager` as `IFeatureManager` and the tool body as `IBody2`,
   then attempted one call for add using
   `IInsertCombineFeature(15903, MainBody, 1, ToolBody)`. That call raised
@@ -579,13 +579,13 @@ the mitigation in this codebase.
   disprove the existing array-call subtraction result: the direct-interface
   candidate failed even for the positive control. A separate
   `IPartDoc.InsertCombineFeature` subtraction control
-  (`scripts/probe_combine_ipartdoc_subtract.py`, 2026-10-04) succeeded: both
+  (`scripts/probes/probe_combine_ipartdoc_subtract.py`, 2026-10-04) succeeded: both
   bodies selected; wrappers were generated `IPartDoc` and `IBody2`; returned
   Python `True`; feature tree gained `Combine1`; rebuild succeeded, What's Wrong
   count 0, one body, volume 800 mm3 (expected 800; pass; bbox [5,2,0]-[15,12,12],
   9 faces / 21 edges). A repeat run on the same target reproduced the result
   exactly. This validates the IPartDoc method for subtraction only. A read-only
-  definition inspection (`scripts/probe_combine_definition_readonly.py`, 2026-10-04)
+  definition inspection (`scripts/probes/probe_combine_definition_readonly.py`, 2026-10-04)
   found `Combine1` type `CombineBodies`; `GetDefinition()` returned raw
   `win32com.client.CDispatch`, wrapped as generated
   `ICombineBodiesFeatureData`. Read-back: `OperationType=1`, `MainBody` returned
@@ -598,7 +598,7 @@ the mitigation in this codebase.
   SWBODYADD=15903, SWBODYCUT=15902, SWBODYINTERSECT=15901. The OperationType=1
   read-back matches Subtract in the feature-data enum, not the insertion enum.
   Feature-data enum values were exercised in one controlled
-  `ModifyDefinition` probe (`scripts/probe_combine_modify_definition.py`,
+  `ModifyDefinition` probe (`scripts/probes/probe_combine_modify_definition.py`,
   2026-10-04): each fresh part first created a verified subtraction feature,
   then changed only `OperationType` and called `IFeature.ModifyDefinition(data,
   doc, None)` once, without selection-access calls. For Add=0, ModifyDefinition
@@ -610,7 +610,7 @@ the mitigation in this codebase.
   6 faces / 12 edges). The prior `BodiesToCombine=None` with count 1 remains an
   unexplained readback limitation; no AccessSelections was used. These exact
   fixtures pass via ModifyDefinition; direct IPartDoc add/common insertion remains
-  unsuccessful and is not the implemented route. The follow-up add/common probe, `scripts/probe_combine_ipartdoc_add_common.py` (2026-10-04),
+  unsuccessful and is not the implemented route. The follow-up add/common probe, `scripts/probes/probe_combine_ipartdoc_add_common.py` (2026-10-04),
   selected both bodies and made one `IPartDoc.InsertCombineFeature` call per
   operation in separate fresh parts. Both returned Boolean `False` with no new
   feature-tree names; rebuild succeeded, What's Wrong count was 0, and 2 unchanged
@@ -619,7 +619,7 @@ the mitigation in this codebase.
   from their Boolean or clean rebuild. The separate ModifyDefinition path above
   passes these exact fixtures and is the measured basis for the typed tool; support
   remains limited to those fixture geometries. Probe history is in
-  `scripts/probe_combine_bodies.py`. The typed
+  `scripts/probes/probe_combine_bodies.py`. The typed
    extended-tier `combine_bodies` tool is registered and follows this measured path: subtract
    calls `IPartDoc.InsertCombineFeature(15902, ...)`; add/common seed that verified
    subtraction and alter only `ICombineBodiesFeatureData.OperationType` (0/2) via

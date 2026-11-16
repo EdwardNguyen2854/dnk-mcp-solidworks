@@ -184,14 +184,15 @@ def set_view(args: dict) -> dict:
 @registry.tool(
     "capture_screenshot",
     "Save a view as an image and return it as image content so the model can "
-    "be looked at.",
+    "be looked at. `view: \"current\"` captures without moving the camera.",
     obj(
         {
             "path": string("optional output path (sandboxed)", default=None),
             "view": string(
-                "standard view to apply first",
-                enum=["front", "back", "left", "right", "top", "bottom",
-                      "isometric", "trimetric", "dimetric"],
+                "standard view to apply first, or 'current' to leave the camera "
+                "where the engineer left it",
+                enum=["current", "front", "back", "left", "right", "top",
+                      "bottom", "isometric", "trimetric", "dimetric"],
                 default="isometric",
             ),
             "width": integer("image width in pixels", default=1600),
@@ -383,33 +384,62 @@ def get_selection(args: dict) -> dict:
     "is gone (REFERENCE_NOT_FOUND), matches more than one entity "
     "(REFERENCE_AMBIGUOUS), or belongs to another document "
     "(REFERENCE_DOCUMENT_MISMATCH). Never resolves to a guessed entity. Returns "
-    "the current index, details, and a refreshed reference.",
-    obj({"ref": string("opaque reference from get_selection")}, required=("ref",)),
+    "the current index, details, and a refreshed reference. Set "
+    "for_offset_plane for face references that will drive an offset plane: the "
+    "captured planar-face geometry must still match, so a changed face is "
+    "rejected instead of silently offset.",
+    obj(
+        {
+            "ref": string("opaque reference from get_selection"),
+            "for_offset_plane": boolean(
+                "require unchanged planar-face geometry", default=False
+            ),
+        },
+        required=("ref",),
+    ),
     tags=("inspect", "selection"),
 )
 def resolve_entity_reference(args: dict) -> dict:
-    return ok(run(lambda: references.resolve_entity_reference(args["ref"])))
+    return ok(
+        run(
+            lambda: references.resolve_entity_reference(
+                args["ref"], args.get("for_offset_plane", False)
+            )
+        )
+    )
 
 
 @registry.tool(
     "highlight_entities",
     "Transiently select referenced entities in the SOLIDWORKS viewport so the "
     "engineer can see them. A view action: it changes no geometry and is not a "
-    "preview. With clear=true it clears the selection instead. References are "
+    "preview. Existing engineer selections and their marks are never replaced. "
+    "Each apply opens an owner-scoped lease and selects only entities that are "
+    "not already selected; clear=true removes only that owner's entries, so a "
+    "stale review cannot clear the engineer's work. Owner tokens are single-use: "
+    "clearing before applying fences a delayed apply. References are "
     "revalidated first, so a stale reference fails explicitly.",
     obj(
         {
             "refs": array(
                 "references from get_selection", {"type": "string"}, default=[]
             ),
-            "clear": boolean("clear the selection instead of highlighting", default=False),
-        }
+            "clear": boolean(
+                "clear only this owner's highlight", default=False
+            ),
+            "owner": string("single-use review ownership token"),
+        },
+        required=("owner",),
     ),
     tags=("selection",),
 )
 def highlight_entities(args: dict) -> dict:
     return ok(
-        run(lambda: references.highlight_entities(args.get("refs", []), args.get("clear", False)))
+        run(
+            lambda: references.highlight_entities(
+                args.get("refs", []), args.get("clear", False), args["owner"]
+            )
+        )
     )
 
 
@@ -429,6 +459,7 @@ def highlight_entities(args: dict) -> dict:
             "face_index": integer(
                 "planar face index from list_faces as the base reference", default=None
             ),
+            "entity_ref": string("captured planar-face reference; revalidated inside the offset mutation", default=None),
             "second_plane": string("second plane for midplane", default=None),
             "second_face_index": integer(
                 "second planar face for midplane", default=None
@@ -457,6 +488,7 @@ def create_reference_plane(args: dict) -> dict:
             args.get("axis_edge"),
             args.get("flip", False),
             args.get("name"),
+            args.get("entity_ref"),
         )
     )
     return envelope(result)

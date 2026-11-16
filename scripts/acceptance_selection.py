@@ -149,19 +149,26 @@ def main() -> int:
         )
         data_of("resolve_entity_reference", ref=edge_entry["ref"])
 
-        # 3. highlight and clear.
-        highlighted = data_of("highlight_entities", refs=[face_entry["ref"], edge_entry["ref"]])
+        # 3. highlight and clear (owner-scoped lease).
+        highlighted = data_of(
+            "highlight_entities",
+            refs=[face_entry["ref"], edge_entry["ref"]],
+            owner="acceptance-highlight",
+        )
         re_selected = data_of("get_selection")
         check(
             "highlight_entities selects both referenced entities",
             highlighted.get("highlighted") == 2 and re_selected.get("count") == 2,
             f"highlighted={highlighted.get('highlighted')} selected={re_selected.get('count')}",
         )
-        cleared = data_of("highlight_entities", refs=[], clear=True)
+        cleared = data_of(
+            "highlight_entities", refs=[], clear=True, owner="acceptance-highlight"
+        )
         check(
             "highlight clear empties the selection",
-            cleared.get("cleared") is True and data_of("get_selection").get("count") == 0,
-            f"cleared={cleared.get('cleared')}",
+            cleared.get("status") == "cleared"
+            and data_of("get_selection").get("count") == 0,
+            f"cleared={cleared.get('status')}",
         )
 
         # 4. Close and reopen: references survive a new document session.

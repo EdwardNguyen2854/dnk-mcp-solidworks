@@ -53,6 +53,15 @@ All notable changes to this project are documented here. The format follows
   Combine feature, clean rebuild, and pre-COM rejection of invalid indices.
   Evidence remains limited to the overlapping rectangular-prism fixture on
   SW2026 SP0.0; other geometry and versions are unverified.
+- `capture_screenshot` accepts `view: "current"`, which captures the engineer's
+  current camera without applying a standard view first. The existing default
+  (`isometric`) is unchanged, so current callers behave exactly as before; an
+  agent-facing integration can now look at the model without rotating the
+  viewport.
+- Hardened datum selection: reference candidates fail closed when their geometry
+  cannot be read completely, highlight leases are owned and cleared by identity,
+  planar-face references can be revalidated for offset-plane mutation, and edge
+  fingerprints sample the trimmed span instead of the untrimmed support curve.
 - Drawing annotation editing: `list_drawing_annotations` now reports a stable
   per-view `index`, the dimension `reading` (value with prefix/suffix) and a
   note's `resolved_text` for `$PRP` property links. New tools

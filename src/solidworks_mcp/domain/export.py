@@ -100,7 +100,10 @@ def capture_screenshot(
 ) -> dict:
     _, doc, _ = session.active_doc(("part", "assembly", "drawing"))
     config = get_config()
-    if view:
+    # "current" (and None/empty) capture the camera as the engineer left it: an
+    # agent looking at the model must be able to see the current view without
+    # the capture rotating it. Any other value applies that standard view.
+    if view and view != "current":
         session.set_view(doc, view)
     if path:
         target = config.resolve_output_path(path)

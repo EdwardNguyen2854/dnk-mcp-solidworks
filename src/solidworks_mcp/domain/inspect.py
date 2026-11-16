@@ -181,6 +181,62 @@ def _curve_name(edge) -> str:
     return "other"
 
 
+def _edge_vertex_points(edge) -> tuple | None:
+    """Both endpoints from the edge's own vertices — trimmed by construction."""
+    try:
+        raw_start = edge.GetStartVertex()
+        raw_end = edge.GetEndVertex()
+    except Exception:
+        return None
+    if raw_start is None or raw_end is None:
+        return None
+    try:
+        start = _point_or_none(binding.wrap(raw_start, "IVertex").GetPoint())
+        end = _point_or_none(binding.wrap(raw_end, "IVertex").GetPoint())
+    except Exception:
+        return None
+    if start and len(start) >= 3 and end and len(end) >= 3:
+        return start[:3], end[:3]
+    return None
+
+
+def _edge_span_points(edge) -> tuple | None:
+    """Both endpoints from the curve's trimmed parameter range.
+
+    A vertex-less edge — a full circle around a hole, for instance — still has a
+    bounded span on its curve, so sample that span. Never sample the untrimmed
+    ``0.0``/``1.0`` range: those extremes describe the support curve and can lie
+    far outside the edge's actual extent.
+    """
+    try:
+        params = edge.GetCurveParams()
+        start_param, end_param = float(params[6]), float(params[7])
+    except Exception:
+        return None
+    evaluators = []
+    try:
+        curve = binding.wrap(edge.GetCurve(), "ICurve")
+        evaluators.append(lambda param: binding.value(curve.Evaluate(param)))
+    except Exception:
+        pass
+    evaluators.append(lambda param: binding.value(edge.Evaluate(param)))
+    for evaluate in evaluators:
+        points = []
+        for param in (start_param, end_param):
+            try:
+                point = _point_or_none(evaluate(param))
+            except Exception:
+                points = None
+                break
+            if not point or len(point) < 3:
+                points = None
+                break
+            points.append([float(value) for value in point[:3]])
+        if points:
+            return points[0], points[1]
+    return None
+
+
 def edge_details(edge) -> dict:
     details = {"curve": _curve_name(edge)}
     if details["curve"] == "circle":
@@ -196,38 +252,22 @@ def edge_details(edge) -> dict:
     length = _curve_length(edge)
     if length is not None:
         details["length_mm"] = round(units.m_to_mm(length), 6)
-    try:
-        raw_start = edge.GetStartVertex()
-        raw_end = edge.GetEndVertex()
-        if raw_start is None and raw_end is None:
-            details["closed"] = True
-            details["endpoint_source"] = "no_vertices"
-            return details
-        start = (
-            _point_or_none(binding.wrap(raw_start, "IVertex").GetPoint())
-            if raw_start is not None
-            else None
-        )
-        end = (
-            _point_or_none(binding.wrap(raw_end, "IVertex").GetPoint())
-            if raw_end is not None
-            else None
-        )
-        if start and len(start) >= 3 and end and len(end) >= 3:
-            details["start_mm"] = [round(units.m_to_mm(v), 6) for v in start[:3]]
-            details["end_mm"] = [round(units.m_to_mm(v), 6) for v in end[:3]]
-            details["closed"] = sum(
-                (start[axis] - end[axis]) ** 2 for axis in range(3)
-            ) <= 1e-18
-            details["endpoint_source"] = "trimmed_vertices"
-        else:
-            details["closed"] = False
-            details["endpoint_source"] = "partial_vertices"
-    except Exception:
-        # Do not substitute curve parameter samples: they can describe the
-        # untrimmed support curve and lie far outside the edge's actual span.
+    span = _edge_vertex_points(edge)
+    source = "trimmed_vertices"
+    if span is None:
+        span = _edge_span_points(edge)
+        source = "trim_params"
+    if span is None:
         details["closed"] = None
         details["endpoint_source"] = "unavailable"
+        return details
+    start, end = span
+    details["start_mm"] = [round(units.m_to_mm(value), 6) for value in start]
+    details["end_mm"] = [round(units.m_to_mm(value), 6) for value in end]
+    details["closed"] = sum(
+        (start[axis] - end[axis]) ** 2 for axis in range(3)
+    ) <= 1e-18
+    details["endpoint_source"] = source
     return details
 
 

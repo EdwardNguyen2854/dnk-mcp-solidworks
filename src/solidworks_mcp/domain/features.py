@@ -1924,3 +1924,204 @@ def create_axis(
 def list_reference_planes() -> dict:
     _, doc, _ = session.active_doc(("part",))
     return {"planes": session.plane_names(doc), "axes": session.axis_names(doc)}
+
+
+# IPartDoc.InsertCombineFeature uses swBodyOperationType_e (not the feature-data
+# enum). The only insertion operation used here is the measured subtraction
+# seed; Add/Common are applied through ICombineBodiesFeatureData.OperationType.
+_COMBINE_INSERT_SUBTRACT = 15902
+_COMBINE_FEATURE_OPERATION = {"add": 0, "subtract": 1, "common": 2}
+
+
+def _combine_dispatch_array(body):
+    import pythoncom
+    import win32com.client
+
+    return win32com.client.VARIANT(
+        pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, [body]
+    )
+
+
+def _combine_failure(
+    doc, operation: str, original_names: set[str], before: dict, failure: Exception
+):
+    """Remove only features created by this call, then prove the model restored."""
+    rollback_error = None
+    try:
+        if feature_names(doc) != original_names:
+            _rollback_features(doc, original_names)
+    except Exception as exc:
+        rollback_error = f"{type(exc).__name__}: {exc}"
+    try:
+        after = _model_fingerprint(doc)
+        unchanged = _same_fingerprint(before, after)
+    except Exception as exc:
+        after = None
+        unchanged = False
+        rollback_error = rollback_error or f"fingerprint failed: {type(exc).__name__}: {exc}"
+    if unchanged:
+        raise FeatureBuildError(
+            f"combine_bodies {operation} failed; the model was restored",
+            operation=operation,
+            failure=f"{type(failure).__name__}: {failure}",
+            rolled_back=True,
+            model_unchanged=True,
+            rollback_error=rollback_error,
+        ) from failure
+    raise FeatureBuildError(
+        f"combine_bodies {operation} failed and rollback could not be verified",
+        operation=operation,
+        failure=f"{type(failure).__name__}: {failure}",
+        rolled_back=False,
+        model_unchanged=False,
+        rollback_error=rollback_error,
+        before=before,
+        after=after,
+        hint="Inspect the active model and restore its checkpoint if needed.",
+    ) from failure
+
+
+def combine_bodies(
+    operation: str, main_body_index: int, tool_body_index: int
+) -> dict:
+    """Combine one indexed tool body into one indexed main body.
+
+    Subtraction is directly measured through IPartDoc.InsertCombineFeature.
+    Add/common create that known-good subtraction feature, then change only the
+    feature-data OperationType through IFeature.ModifyDefinition. Geometry
+    support is bounded by the exact live fixtures documented in COM-QUIRKS.md.
+    """
+    if operation not in _COMBINE_FEATURE_OPERATION:
+        raise InvalidParameterError(
+            f"unknown combine operation {operation!r}",
+            available=sorted(_COMBINE_FEATURE_OPERATION),
+        )
+    for name, index in (
+        ("main_body_index", main_body_index),
+        ("tool_body_index", tool_body_index),
+    ):
+        if type(index) is not int or index < 0:
+            raise InvalidParameterError(f"{name} must be a non-negative integer")
+    if main_body_index == tool_body_index:
+        raise InvalidParameterError("main_body_index and tool_body_index must differ")
+
+    _, doc, _ = session.active_doc(("part",))
+    bodies = inspect._bodies(doc)
+    for name, index in (
+        ("main_body_index", main_body_index),
+        ("tool_body_index", tool_body_index),
+    ):
+        if index >= len(bodies):
+            raise SelectionError(
+                f"{name} {index} is out of range for {len(bodies)} current bodies"
+            )
+        body_type = int(binding.value(bodies[index].GetType()))
+        if body_type != inspect.BODY_TYPES["solid"]:
+            raise InvalidParameterError(f"{name} must refer to a solid body")
+
+    original_names = feature_names(doc)
+    before = _model_fingerprint(doc)
+    try:
+        session.clear_selection(doc)
+        # Use the exact enumeration that resolved both public indices; a second
+        # GetBodies2 call could reorder bodies between validation and selection.
+        select_data = inspect.create_select_data(doc)
+        if select_data is None:
+            raise ComCallError("could not create selection data for body combination")
+        selected = 0
+        for body in (bodies[main_body_index], bodies[tool_body_index]):
+            wrapped_body = binding.wrap(body, "IBody2")
+            if not wrapped_body.Select2(bool(selected), select_data):
+                raise SelectionError(f"could not select combine body {selected}")
+            selected += 1
+        if selected != 2:
+            raise SelectionError(f"expected to select 2 bodies, selected {selected}")
+
+        main_body = binding.wrap(bodies[main_body_index], "IBody2")
+        tool_body = binding.wrap(bodies[tool_body_index], "IBody2")
+        part = binding.wrap(doc, "IPartDoc")
+        insert_result = part.InsertCombineFeature(
+            _COMBINE_INSERT_SUBTRACT,
+            main_body,
+            _combine_dispatch_array(tool_body),
+        )
+
+        after_insert_names = feature_names(doc)
+        created_names = after_insert_names - original_names
+        if len(created_names) != 1:
+            raise FeatureBuildError(
+                "subtraction seed did not create exactly one new feature",
+                insert_result=bool(insert_result),
+                new_features=sorted(created_names),
+            )
+        feature = next(
+            (
+                binding.wrap(candidate, "IFeature")
+                for candidate in session.iter_features(doc)
+                if str(binding.value(candidate.Name)) in created_names
+            ),
+            None,
+        )
+        if feature is None or str(feature.GetTypeName2()) != "CombineBodies":
+            raise FeatureBuildError(
+                "subtraction seed did not produce a CombineBodies feature",
+                new_features=sorted(created_names),
+            )
+
+        modify_result = None
+        if operation != "subtract":
+            raw_definition = feature.GetDefinition()
+            if raw_definition is None:
+                raise ComCallError("CombineBodies.GetDefinition returned None")
+            definition = binding.wrap(
+                raw_definition, "ICombineBodiesFeatureData"
+            )
+            definition.OperationType = _COMBINE_FEATURE_OPERATION[operation]
+            modify_result = bool(feature.ModifyDefinition(definition, doc, None))
+            if not modify_result:
+                raise FeatureBuildError(
+                    "SOLIDWORKS refused the CombineBodies feature-data update",
+                    operation=operation,
+                )
+
+        rebuild = inspect.rebuild(doc)
+        mass_properties = inspect.mass_properties(doc)
+        body_count = len(inspect._bodies(doc, "solid"))
+        if not rebuild.get("ok") or rebuild.get("whats_wrong", {}).get("count", 0):
+            raise FeatureBuildError(
+                "combine_bodies built a feature but the model reports errors",
+                operation=operation,
+                rebuild=rebuild,
+            )
+        if body_count != 1:
+            raise FeatureBuildError(
+                "combine_bodies did not produce exactly one solid body",
+                operation=operation,
+                body_count=body_count,
+            )
+        if mass_properties.get("volume_mm3") is None:
+            raise FeatureBuildError(
+                "combine_bodies produced no measurable volume",
+                operation=operation,
+                mass_properties=mass_properties,
+            )
+        return {
+            "data": {
+                "operation": operation,
+                "main_body_index": main_body_index,
+                "tool_body_index": tool_body_index,
+                "feature": next(iter(created_names)),
+            },
+            "evidence": {
+                "insert_result": bool(insert_result),
+                "modify_definition_result": modify_result,
+                "feature_tree_before": sorted(original_names),
+                "feature_tree_after": sorted(feature_names(doc)),
+                "rebuild": rebuild,
+                "whats_wrong": rebuild.get("whats_wrong", {}),
+                "body_count": body_count,
+                "mass_properties": mass_properties,
+            },
+        }
+    except Exception as exc:
+        _combine_failure(doc, operation, original_names, before, exc)

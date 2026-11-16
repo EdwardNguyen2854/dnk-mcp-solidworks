@@ -4,6 +4,14 @@ The server's first engineering-drawing profile is `iso_metric`. It targets a
 metric part drawing using ISO A4-A0 paper sizes, a stock ISO frame, and
 first-angle projection by default.
 
+The house profile is a review profile: A3 landscape, first angle, millimetres,
+revision A. Material, functional fits, datums, process/finish requirements,
+checker and approver remain unconfirmed until supplied. ISO 2768-1:1989 remains
+current for general linear/angular tolerances where adopted; ISO 2768-2 is
+withdrawn and its general geometrical specification successor is ISO
+22081:2021. Do not apply an obsolete combined `ISO 2768-mK` note or a blanket
+surface finish.
+
 The profile is intentionally a contract, not a claim of complete standards
 compliance. The relevant drafting families include ISO 128, ISO 129-1, ISO
 5455, ISO 5457, ISO 7200, and ISO 1101. Company title blocks, tolerance
@@ -17,7 +25,21 @@ policies, material conventions, and release procedures still need approval.
    existing drawing was not created through `new_drawing`.
 3. `drawing_set_property` writes title-block-linked custom properties and reads
    them back.
-4. `list_drawing_annotations` reports each annotation with a stable per-view
+4. For an orthographic set, insert one master view with `drawing_insert_view`,
+   using an exact open model reference and configuration. Create every required
+   companion with `drawing_insert_projected_view`, passing the same master
+   view name as `parent_view` each time. Place first-angle top/right views
+   below/left of the master, and third-angle top/right views above/right; the
+   tool's direction is sheet placement, not an orientation label. Add all
+   projections before creating another sheet. Verify each view's orientation,
+   position, resolved model identity, and configuration with
+   `list_drawing_views`. Live 34.0 acceptance reads configuration back; report
+   an unavailable getter explicitly if another binding fails. SW2026 may omit
+   orientation read-back for projected views, so confirm the convention from
+   the sheet setting, projection symbol and raster. Use
+   `drawing_insert_standard_views` only when direct batch insertion is
+   explicitly wanted.
+5. `list_drawing_annotations` reports each annotation with a stable per-view
    index, the dimension `reading` (value with prefix/suffix) and a note's
    `resolved_text` for `$PRP` links. `drawing_move_annotation`,
    `drawing_delete_annotation` and `drawing_set_annotation_text` move, delete
@@ -25,28 +47,36 @@ policies, material conventions, and release procedures still need approval.
    verified). `drawing_add_dimension` dimensions picked view edges from
    `list_drawing_view_edges`, and `drawing_delete_view` removes a view that
    landed in the wrong place.
-5. `list_drawing_dimensions` + `drawing_set_dimension_tolerance` place ISO
-   dimension tolerances (symmetric, bilateral, limits, min/max, hole/shaft
-   fits) and verify the measured read-back. The ISO 2768-mK default is a
-   general tolerance note; `drawing_insert_general_tolerance_table` inserts
-   the DimXpert table where the typelib supports it (parts/assemblies).
-6. `list_drawing_view_edges` addresses view edges; `drawing_insert_datum` and
+6. `list_drawing_dimensions` + `drawing_set_dimension_tolerance` place
+   confirmed tolerances (symmetric, bilateral, limits, min/max, hole/shaft
+   fits) and verify measured read-back. H7 is a hole zone; shaft zones use
+   lowercase. Do not assign a fit unless mating intent is known.
+7. `list_drawing_view_edges` addresses view edges; `drawing_insert_datum` and
    `drawing_insert_gtol` attach datum tags and geometric tolerance frames
    with measured frame read-back.
-7. `drawing_insert_surface_finish` adds a surface finish symbol with the
+8. `drawing_insert_surface_finish` adds a surface finish symbol with the
    roughness value read back from the symbol text.
-8. `drawing_insert_revision_table` + `drawing_add_revision` add the sheet's
+9. `drawing_insert_revision_table` + `drawing_add_revision` add the sheet's
    revision table (stock columns ZONE/REV./DESCRIPTION/DATE/APPROVED).
-9. Assembly drawings: `drawing_insert_bom_table` inserts the parts list
+10. Assembly drawings: `drawing_insert_bom_table` inserts the parts list
    (the view's referenced configuration is resolved automatically) and
    `drawing_insert_balloons` auto-balloons the components. Hole callouts
    (`drawing_insert_hole_callout`) work for holes that carry callout data —
    Hole Wizard holes; other holes are refused with an actionable hint.
-10. `drawing_manifest` collects sheets, views, annotations, properties, and
+11. `drawing_audit_feature_coverage` checks an explicit mapping from named
+    design-critical features to stable IDs from `list_drawing_dimensions`.
+    It detects missing coverage, stale IDs, and duplicate assignments; it
+    cannot infer functional intent and must not use edge count as feature
+    quantity. Re-space dimensions after the final annotation is added.
+12. `drawing_layout_audit` checks full-sheet text estimates and revision-table
+    bounds. Inspect a rendered raster for leaders, title-block overflow, frame
+    geometry, line weights, and glyph rendering. PDF text extraction is not
+    authoritative for diameter or degree symbols.
+13. `drawing_manifest` collects sheets, views, annotations, properties, and
     rebuild state.
-11. `validate_iso_drawing` checks the observable ISO contract and returns
+14. `validate_iso_drawing` checks the observable ISO contract and returns
     structured errors and warnings.
-12. `export_document` plus `verify_export` verifies the exported PDF or DXF
+15. `export_document` plus `verify_export` verifies the exported PDF or DXF
     structure (`page_count_consistent` flags a declared/actual page mismatch).
 
 The reusable orchestration procedure is in
@@ -77,6 +107,9 @@ Implemented and verified by the release validator:
   the stock ISO frame carries static notes with no property links, enable with
   `require_title_block_display=true` for a company frame that links them
 - structured annotation counts
+- exact revision-table bounds and full-sheet text-screening estimates
+- source/target model geometry comparison only when the caller provides
+  explicit volume, extrema, and sampled surface tolerances
 
 Not yet claimed as fully automated ISO compliance:
 
@@ -93,6 +126,7 @@ Not yet claimed as fully automated ISO compliance:
 - general and feature-specific tolerance policy validation
 - company-specific sheet artwork and title-block geometry
 - visual review of line weights, fonts, symbols, and exported PDF content
+- functional intent, material/process requirements, and release approvals
 
 On SOLIDWORKS 2026 SP0.0, arbitrary `.slddrt` sheet artwork is not reachable
 through the tested COM path. The validator therefore treats the stock ISO frame

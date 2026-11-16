@@ -1,131 +1,52 @@
 ---
 name: iso-engineering-drawing
-description: Create and release-review an ISO metric part drawing through the SOLIDWORKS MCP tools.
+description: Create and review an ISO metric part drawing in SOLIDWORKS with explicit model references, feature coverage, full-sheet checks, and release gates.
 ---
 
 # ISO Engineering Drawing
 
-Use this skill for an ISO metric part drawing. The skill coordinates the MCP
-tools; it does not bypass them or claim that a plain note is a semantic
-dimension, tolerance, datum, or symbol.
+Use this workflow for an ISO metric drawing. It coordinates the typed SOLIDWORKS MCP tools and preserves the distinction between a review drawing and a released drawing.
 
-## Contract
+## Intake
 
-Required inputs:
-
-- model path or an active part
-- drawing number
-- title
-- revision
-- material when known
-- output path for the source drawing and PDF
-
-Defaults:
-
-- ISO metric profile
-- A3 landscape stock frame
-- first-angle projection
-- front, top, and right model views
-- model dimensions first; DimXpert auto-dimension only as a fallback
-
-The stock ISO frame is not a company-specific title block. Do not describe the
-result as manufacturing-release compliant unless the human/company review has
-approved the frame, drafting standard, tolerances, and annotations.
+Record the exact source model path, document type, configuration, drawing number, title, requested revision, and output paths. Treat unknown material, functional fits, datum scheme, process/finish requirements, checker, and approver as unconfirmed. Read cad-house-standard for the agreed profile.
 
 ## Workflow
 
-1. Call `get_capabilities` and confirm the active SOLIDWORKS revision and
-   drawing template.
-2. Confirm the source model is a part, rebuild it with `rebuild_document`, and
-   stop on any `What's Wrong` entries.
-3. Call `new_drawing` with `paper_size="A3"`, `scale=1.0`, and
-   `first_angle=true`.
-4. If working in an existing drawing instead, call `drawing_set_iso_units` and
-   stop if millimetre read-back fails.
-5. Call `drawing_insert_standard_views` for front, top, and right views.
-6. Call `list_drawing_views`, then use `drawing_set_view` to correct positions,
-   scale, hidden-line mode, and tangent-edge display. Keep every model view
-   inside the usable sheet area and do not add a second sheet before any
-   required projected-view operation.
-7. Set title-block-linked properties individually with `drawing_set_property`:
-   `DrawingNumber`, `Title`, `Revision`, and known fields such as `Material`,
-   `Scale`, `Projection`, `DrawnBy`, `CheckedBy`, and `ApprovedBy`.
-8. Add center marks and centerlines for circular features. Add sections or
-   details when they make the model easier to manufacture from: the cutting
-   line and detail circle take sheet millimetres and are converted into the
-   parent view's sketch space, and a section whose cut cannot be verified is
-   reported as an error — fix the parent/line coordinates instead of shipping
-   it. The circular view yields a single centre mark on this build.
-9. Try `drawing_insert_model_dimensions` when the model has intentional
-   dimensions marked for drawing. If it adds nothing on SW2026 SP0.0, use
-   `drawing_auto_dimension` and then `drawing_arrange_dimensions`. Treat those
-   dimensions as requiring design-intent review, not as automatic compliance.
-   For every position-toleranced feature, locate it with **basic (boxed)**
-   dimensions from the datum edges: `drawing_set_dimension_tolerance(
-   tolerance="basic")`. A linear dimension from a line to a circle measures to
-   the circle centre, so datum-referenced locating dimensions need no
-   construction geometry.
-10. Set tolerances where the design requires them: `list_drawing_dimensions`
-    gives indices, `drawing_set_dimension_tolerance` sets symmetric, bilateral,
-    limits, min/max, or ISO fit values (`shaft_fit` optional for hole-only
-    callouts such as `2X Ø10 H7`), and each call verifies the measured
-    read-back. Values are millimetres on the tool surface.
-11. Add the general tolerance default with `drawing_add_note`:
-    `UNLESS OTHERWISE SPECIFIED: GENERAL TOLERANCES ISO 2768-mK`. On parts and
-    assemblies `drawing_insert_general_tolerance_table` inserts the DimXpert
-    table instead; on drawings the note is the measured path.
-12. Attach semantic annotations to features that need them:
-    `list_drawing_view_edges` addresses the edges, then `drawing_insert_datum`
-    (for example A), `drawing_insert_gtol` (characteristic, tolerance,
-    diameter flag, datum references) and `drawing_insert_surface_finish`
-    (roughness value). Define a datum scheme first (primary face, long edge,
-    short edge) and make **every referenced datum has a visible datum feature
-    symbol**; a position frame that references A|B|C must have A, B and C on
-    the sheet. Each tool verifies its own read-back; do not fake any of these
-    with plain notes.
-13. Add the revision table with `drawing_insert_revision_table`, then
-    `drawing_add_revision` for each revision row; the latest revision must
-    match the `Revision` property.
-14. Add concise manufacturing notes with `drawing_add_note`. Do not encode
-    GD&T, surface finish, hole callouts, or other semantic symbols as notes.
-15. Call `drawing_manifest` and inspect sheets, view outlines, annotations,
-    properties, and rebuild state.
-16. Call `validate_iso_drawing` with at least three model views and the
-    required title-block properties. Correct every error before exporting.
-17. Call `export_document` for PDF and then `verify_export`. Save the source
-    drawing, close it, reopen it, and run `drawing_manifest` and
-    `validate_iso_drawing` again before reporting success.
+1. Call get_capabilities; confirm the running SOLIDWORKS revision, template, and guarded capabilities.
+2. Record the source model path/configuration and feature tree. Rebuild and stop on What's Wrong. Capture mass properties, exact extrema, topology, and a source screenshot when geometry changes are in scope.
+3. Create or prepare the A3 landscape drawing in millimetres, first-angle projection, revision A review profile. Never describe the stock ISO frame as a company title block.
+4. Create one master view with `drawing_insert_view`, using the exact open
+   `model_reference` and `configuration`; use front unless the drawing intent
+   calls for another master. Save its returned view name. Create each
+   orthographic companion with `drawing_insert_projected_view`, always passing
+   that same name as `parent_view`. For first-angle, place top below the master
+   and right-side left; for third-angle, place top above and right-side right.
+   `direction` describes sheet placement, not orientation. Add projections
+   before any second sheet exists.
+5. Call `list_drawing_views` and verify master/companion types, measured
+   positions and outlines, and each view's resolved model reference and
+   configuration. Live 34.0 acceptance reads configuration back; record it as
+   unavailable if another binding's getter fails. SW2026 may omit projected
+   orientation read-back, so confirm the convention from the sheet setting,
+   projection symbol and raster. Use
+   `drawing_insert_standard_views` only when direct batch insertion is
+   explicitly requested. Reserve keep-outs for the sheet frame, title-block
+   cluster, revision table, leaders, existing annotations and dimension bands.
+   Use the lower-left sheet origin in millimetres; re-list outlines after edits.
+6. Set title-block-linked properties individually. Compare the API property values with each linked note's rendered/resolved value. Keep missing material, checked-by, and approved-by fields explicitly unconfirmed.
+7. Add centre marks, section/detail views, datums, GD&T, and surface-finish symbols only where design intent supports them. Attach symbols to their intended feature. A surface-finish value can read back yet render incorrectly on this build; pair with a clear note only when the specified process supports it and verify the rendered result.
+8. Import model dimensions and compare annotation inventories before and after. If none import, use auto-dimension only as a review aid. Arrange dimensions after the final annotation is added.
+9. Build an explicit feature-to-dimension coverage map using model feature names and IDs from list_drawing_dimensions; call drawing_audit_feature_coverage. Investigate every missing critical feature, stale dimension ID, or duplicate assignment. The map is caller-declared and cannot prove functional intent by itself. Never infer hole quantity from edge count.
+10. Apply only confirmed tolerances. ISO 2768-1:1989 remains current for general linear/angular tolerances where adopted. ISO 22081:2021 supersedes withdrawn ISO 2768-2 for general geometrical specifications. Avoid a combined ISO 2768-mK note. H7 is a hole designation; shaft designations use lowercase. Do not assign a blanket surface finish.
+11. Add the revision table and verify its latest row matches the Revision property. Run drawing_layout_audit over the full sheet; inspect text estimate collisions, off-frame notes, exact revision-table bounds, and known blind spots.
+12. Run drawing_manifest, validate_iso_drawing, and a full-sheet raster review. Read symbols and dimension meaning through SOLIDWORKS annotation data and the raster. Do not treat PDF text extraction as authoritative for diameter or degree glyphs.
+13. Export the review PDF. Reopen the native drawing and rerun the manifest and validation. Confirm the source model remains open/unchanged when the workflow started from it.
 
-## Assembly drawings
+## Hole semantics
 
-For an assembly drawing, in addition to the part workflow:
+Use drawing_insert_hole_callout only when SOLIDWORKS reports native callout data. The current target's HoleWizard5 probe crashed in mfc140u.dll, so native Hole Wizard creation remains withheld pending a safe live acceptance path. Current simple/counterbore/countersink/tapped-hole operations report geometry-only semantics; do not represent them as native callouts.
 
-1. `drawing_insert_bom_table` inserts the parts list. The view's referenced
-   configuration is resolved automatically; a header-only table is reported
-   as an error, so pass `configuration` explicitly if the view does not
-   reference the expected one.
-2. `drawing_insert_balloons` auto-balloons the components; verify the balloon
-   texts carry item numbers (the BOM table must exist first).
-3. `drawing_insert_hole_callout` works only for holes that carry callout data
-   (Hole Wizard holes). If the model uses simple cut holes, stop and report
-   instead of faking a note.
+## Release gate
 
-## Stop Conditions
-
-Stop and report a blocking limitation when:
-
-- the sheet is not an ISO A4-A0 size or has no frame;
-- the projection, scale, or view layout is wrong;
-- the drawing rebuild has errors;
-- required title-block properties cannot be read back;
-- the required title-block links cannot be read back when strict display
-  validation is enabled;
-- dimensions are missing or their design intent is unknown;
-- a required semantic annotation is unavailable through the verified tool
-  surface;
-- a hole callout is required but the hole has no callout data (not created
-  with the Hole Wizard); do not replace the callout with a plain note;
-- PDF export or source-document reopen verification fails.
-
-The final report must distinguish `validated observable ISO state` from
-`human/company-standard review still required`.
+A clean tool validation is only observable-state evidence. A drawing stays a review drawing while any functional requirements, material/process, datum scheme, tolerance policy, title-block approvals, or required human raster review remain unresolved. Report each open item and do not claim manufacturing release.

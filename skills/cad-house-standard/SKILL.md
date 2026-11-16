@@ -1,46 +1,37 @@
 ---
 name: cad-house-standard
-description: Editable house-standard profile (sheet, projection, tolerances, title block, revisions) that every drawing task starts from.
+description: Editable review profile for ISO drawings, including sheet, projection, units, tolerance policy, title fields, revisions, and release status.
 ---
 
 # CAD house standard
 
-The server ships an ISO metric default profile; this skill is where a shop's
-own defaults live. Treat the profile table as the contract for every drawing
-task: read it first, apply it, and ask before overriding it.
+Apply this profile to a review drawing. It sets presentation defaults while functional requirements and approvals remain open.
 
-## House standard profile
+## Review profile
 
-Edit the values below once for your shop. Everything left as `server default`
-follows `new_drawing` / `validate_iso_drawing`.
-
-| Setting | Value |
+| Setting | Review default |
 |---|---|
-| Paper size | A3 landscape (server default) |
-| Projection | first angle (`first_angle=true`) |
-| Scale policy | 1:1 when it fits; otherwise the largest whole `1:n` from `[2, 2.5, 5, 10]` that fits the frame |
-| Dimension units / precision | millimetres, 2 decimals (drawing template default) |
-| General tolerance | ISO 2768-mK note: `UNLESS OTHERWISE SPECIFIED: GENERAL TOLERANCES ISO 2768-mK` |
-| Fit standard | ISO 286 hole-basis preferred (H7 shafts, h6/k6 fits) |
-| Surface finish default | Ra 3.2 for machined faces unless the model says otherwise |
-| Title block fields | `Title`, `DrawingNumber`, `Revision`, `Material`, `Scale`, `Projection`, `DrawnBy`, `CheckedBy`, `ApprovedBy` |
-| Revision scheme | `A`, `B`, `C` ...; every revision gets a row in the sheet revision table |
-| Note block | material, finish, deburr, general tolerance note; no GD&T or finish symbols disguised as notes |
-| Output package | PDF (primary) + DXF (sheet geometry); file name `<DrawingNumber>_Rev<Revision>` |
-| Release authority | human/company review; the server validates observable state only |
+| Paper | A3 landscape |
+| Projection | first angle |
+| Units | millimetres; two decimal places for displayed linear dimensions |
+| Revision | A |
+| Scale | 1:1 when the measured view outlines fit; otherwise choose a scale and record it |
+| General dimensional tolerances | Do not add a blanket tolerance note until the applicable design policy is confirmed. ISO 2768-1:1989 class m remains current for general linear/angular tolerances where the specification adopts it. |
+| General geometrical specification | ISO 22081:2021 is the current successor to ISO 2768-2. Apply only when the general specification and datum scheme are defined by the design authority. |
+| Fits | Hole tolerance uses uppercase letters (for example H7); shaft tolerance uses lowercase letters (for example h6). Show a mating fit only when both mating parts and fit intent are specified. |
+| Surface finish | No blanket Ra value. Specify finish only for identified surfaces and a confirmed process or functional requirement. |
+| Title fields | Title, DrawingNumber, Revision, Material, Scale, Projection, DrawnBy, CheckedBy, ApprovedBy |
+| Material, fits, datums, process, approvals | Explicitly unconfirmed until supplied by the design authority |
+| Outputs | Native drawing plus review PDF; DXF only when requested |
+| Status | Review drawing; not manufacturing release |
 
 ## Rules
 
-1. Confirm the profile with the user the first time a new part is drawn; after
-   that, apply it without asking and state which defaults were used.
-2. A requested deviation (third angle, ANSI sheet, different tolerance class)
-   overrides one row only; record it in the final report.
-3. Never describe the stock ISO frame as a company title block. The frame,
-   drafting standard, tolerances and annotations need human approval before
-   release; `validate_iso_drawing` only proves observable state.
-4. Keep `skills/iso-engineering-drawing/SKILL.md` as the procedure and this
-   file as the values. If a value changes, change it here, not in the
-   procedure.
-5. When the shop's title block is not reachable through COM (custom `.slddrt`
-   artwork is not supported on SW2026 SP0.0), say so and report which
-   title-block properties were written and verified instead.
+1. Apply the profile without asking again when the user has already confirmed it in the session. State the values used in the final report.
+2. Record unknown material, fit, datums, finish process, checker, and approver as unconfirmed. Do not infer them from geometry or stock properties.
+3. Keep iso-engineering-drawing as the procedure and this profile as the house values.
+4. Use exact open-model path and configuration for every inserted view. Report the resolved reference and view-level readback; disclose when configuration readback is unavailable.
+5. Keep model dimensions tied to named features and their design intent. Do not translate edge counts into feature quantities. Use drawing_audit_feature_coverage with an explicit feature-to-dimension mapping and flag uncovered critical features.
+6. Review the whole sheet: frame, title block, revision table, dimensions, notes, leaders, view outlines, and keep-out zones. Estimated annotation boxes are screening evidence; inspect a raster rendering of the full sheet.
+7. Hole callouts require verified native callout data. Compound cut holes and cosmetic threads are geometry-only on the current server and must not be presented as Hole Wizard callouts.
+8. Do not call a drawing released until required functional tolerances, material/process requirements, datum scheme, title-block approvals, and human review are complete.

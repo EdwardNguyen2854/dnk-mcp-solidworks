@@ -1,86 +1,27 @@
 ---
 name: drawing-acceptance
-description: Ordered release gate for a SOLIDWORKS drawing, from part intake to verified PDF export.
+description: Ordered review and release gates for a SOLIDWORKS drawing, from source intake through verified native reopen and full-sheet raster review.
 ---
 
 # Drawing acceptance
 
-Run this gate before calling any drawing done. Each step names the tools that
-produce the evidence; a step that cannot be satisfied is a stop condition, not
-a footnote.
+Use this gate before reporting a drawing complete. Separate review acceptance from manufacturing release.
 
 ## Gate
 
-1. **Model intake.** `rebuild_document` and stop on `What's Wrong` entries
-   (`check_errors`). Record `get_mass_properties`, `get_bounding_box` and the
-   feature list (`list_features`) so view selection and dimensions have a
-   source of truth.
-2. **Frame and units.** `list_drawing_sheets` must report the ISO paper size
-   (A4-A0), the intended scale, and millimetres. Run `drawing_preflight`;
-   `view_bounds` and `view_overlap` must be clean.
-3. **Views.** `list_drawing_views` gives names, types, positions and outlines.
-   Fix placement and scale with `drawing_set_view`; correct view deletion is
-   `drawing_delete_view`. Only add sections/details when the primary views
-   cannot describe the part.
-4. **Dimensions.** `list_drawing_dimensions` (value, position, tolerance,
-   hole-callout state) proves what is on the sheet. Add missing intent with
-   `drawing_add_dimension` on edges from `list_drawing_view_edges`; space them
-   with `drawing_arrange_dimensions`; set required tolerances with
-   `drawing_set_dimension_tolerance`. Every position-toleranced feature is
-   located by **basic (boxed)** dimensions from the datum edges — never by
-   plain ± dimensions at the same time. Confirm every location a machinist
-   needs is present (for a hole: X, Y and diameter; for a slot: width, length
-   and X/Y of its centre). Add the ISO 2768-mK note via `drawing_add_note`
-   (height is verified by the tool); it applies only to dimensions without an
-   individual tolerance.
-5. **Annotations.** `list_drawing_annotations` returns per-view indexes, a
-   dimension `reading` and a note `resolved_text`. Clean up with
-   `drawing_move_annotation`, `drawing_delete_annotation` and
-   `drawing_set_annotation_text`. Center marks for circular features via
-   `drawing_insert_center_marks`. No annotation may overlap another or leave
-   the frame; positions come from the listing, never from a screenshot guess.
-   Read the hole callout as a machinist would: `2X Ø10 H7` is unambiguous,
-   `Ø10 H7/h6` (a hole/shaft pair) or an unlabelled fit is not.
-6. **Semantic symbols.** Datums (`drawing_insert_datum`), geometric tolerances
-   (`drawing_insert_gtol`) and surface finish (`drawing_insert_surface_finish`)
-   attach to edges from `list_drawing_view_edges` and verify their own
-   read-back. Every datum referenced in a feature-control frame must have a
-   visible datum feature symbol on the drawing. The surface finish symbol
-   stores its value (`GetText(5)`) but renders it at zero height on this
-   build, so add a companion `Ra x.x` note and say so in the report. A hole
-   callout is only valid for holes with callout data
-   (`drawing_insert_hole_callout`); otherwise report, do not fake a note.
-7. **Title block and revision.** `drawing_set_property` writes and reads back
-   the fields; `drawing_insert_revision_table` + `drawing_add_revision` keep
-   the table's current revision equal to the `Revision` property. The stock
-   ISO frame's cells are static on this build, so when no company template
-   links them, repeat the fields (part name, drawing number, material,
-   revision, scale, units, drawn/checked/date) in a `drawing_add_note` data
-   block next to the title block, and say in the report that the frame is
-   not property-linked. Check the revision table sits inside the frame
-   (`drawing_insert_revision_table` reports `inside_frame`).
-8. **Validate.** `drawing_manifest` for the full inventory, then
-   `validate_iso_drawing` with the required views and title-block fields.
-   Correct every error.
-9. **Audit the layout, then export.** Run `drawing_layout_audit` and require
-   zero collisions and zero off-frame items; it estimates boxes from measured
-   positions and skips the sheet-format border band and title block, so treat
-   a finding as a real overlap until proven otherwise (move annotations with
-   `drawing_move_annotation` and re-run). Then `export_document` to PDF (and
-   DXF when the shop wants it) and `verify_export`: the PDF must report
-   `page_count` and `page_count_consistent=true`; DXF entity counts and
-   extents must match the sheet. Text-level PDF read-back (for example with
-   PyMuPDF) is an external check, not a server tool — use it when available to
-   confirm dimension text rendered, and say so in the report.
-10. **Reopen check.** Save the drawing, close it, reopen it, and re-run
-    `drawing_manifest` + `validate_iso_drawing`. A file that only validates in
-    the live session is not released.
+1. **Source identity and model health.** Record the exact model path and configuration, feature tree, rebuild state, mass properties, exact extrema, topology, and a source fingerprint. Stop on rebuild errors.
+2. **Drawing profile.** For the agreed review profile use A3 landscape, first-angle projection, millimetres, and revision A. Unknown material, functional fits, datums, finish process, and approval fields remain unconfirmed.
+3. **Explicit view references.** Create one master with `drawing_insert_view` and the exact `model_reference` and `configuration`; derive orthographic companions with `drawing_insert_projected_view`, passing the same master name each time. Verify every view's type, position, resolved model path and configuration with `list_drawing_views`; record any configuration read-back limit. SW2026 may omit projected orientation read-back, so confirm the convention from the sheet setting, projection symbol and raster. Use the direct standard-view batch only when explicitly requested.
+4. **Sheet and keep-outs.** Verify the measured sheet and frame. Keep view outlines, dimensions, notes, leaders, title block, and revision table inside appropriate keep-outs. Use measured outlines and a full-sheet raster review.
+5. **Dimension meaning and coverage.** Read dimensions from SOLIDWORKS annotation data. Add only dimensions supported by design intent and re-space after the final annotation. Use drawing_audit_feature_coverage with explicit feature refs and dimension IDs; investigate missing critical features, duplicate assignments, and stale IDs. Edge counts never define feature quantity.
+6. **Tolerances and fits.** Apply only confirmed tolerances. ISO 2768-1:1989 remains current for general linear/angular tolerances where adopted; ISO 22081:2021 supersedes withdrawn ISO 2768-2 for general geometrical specifications. Do not use the obsolete combined ISO 2768-mK callout. H7 denotes a hole; shaft zones are lowercase. Show a mating fit only when both mating components and the fit are specified.
+7. **Semantic annotations.** Verify datums and feature-control frames through annotation data. Use hole callouts only where SOLIDWORKS reports native hole-callout data. Current compound holes and cosmetic threads are geometry-only. Do not assign blanket finish; identify surfaces and process first.
+8. **Title block and revisions.** Verify linked properties and their rendered/resolved values. Confirm latest revision row equals the revision property. Report stock-frame/static-field limitations.
+9. **Layout checks.** Run drawing_layout_audit across the full sheet. Review estimated annotation collisions, off-frame content, revision-table bounds, duplicate notes, frame, title block, leaders, and overflow. API estimates are screening data; inspect the PDF/native raster directly.
+10. **Glyph rendering.** Use SOLIDWORKS annotation data plus a rendered raster to verify diameter, degree, tolerance, and callout symbols. PDF text extraction alone is insufficient for glyph meaning.
+11. **Export and reopen.** Export the review PDF, verify page and geometry structure, save/close/reopen the native drawing, and repeat manifest and validation. Confirm the source model remained unchanged.
+12. **Release decision.** Keep the status at review while functional intent, material/process, datums, tolerances, required approvals, or human checks remain open. Only the design authority can close those items and authorize release.
 
-## Report format
+## Report
 
-State separately:
-
-- `validated observable state` — every check above with its measured values;
-- `open items` — missing GD&T, title-block artwork, tolerance policy, visual
-  checks (line weights, fonts) that require human review;
-- `deviations from the house standard`, naming each overriding value.
+State the observable checks and their evidence, the view references/configurations and readback limits, feature coverage results, any unconfirmed design inputs, raster/PDF checks, reopen result, and whether the result is review or released. Never promote a clean API validation into a release claim.

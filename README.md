@@ -42,7 +42,9 @@ geometry — the same API returns null, False or stale values in equal measure
   points; relations, driving dimensions with read-back and re-drive, offset,
   convert, trim, fillet, chamfer, mirror, construction toggle, sketch
   re-editing; boss/cut extrude (including a corrected `through_all_both`),
-  revolve, fillet, chamfer, shell, simple holes, draft, sweep, loft, feature
+  revolve/revolve-cut, thin extrudes, constant/face fillets, chamfer variants,
+  shell, simple/counterbore/countersink/tapped holes, cosmetic threads, dome,
+  draft, sweep, loft, feature
   suppression, materials; reference planes and axes; linear and circular
   patterns; mirror.
 - **Closed-loop verification** — mass properties, bounding box, What's Wrong,
@@ -207,30 +209,34 @@ Machine-specific overrides can also live in a gitignored
 The tool catalog is the capability layer; `skills/<name>/SKILL.md` carries the
 procedure layer (order of operations, defaults, stop conditions) that turns
 the tools into a repeatable workflow. The bundled pack is
-`iso-engineering-drawing`, `cad-house-standard`, `drawing-acceptance` and
-`sheet-layout`. Install them into the directory your agent client scans:
+`iso-engineering-drawing`, `cad-house-standard`, `drawing-acceptance`,
+`sheet-layout`, `cad-remodel` and `image-assisted-modeling`. Install them into
+the directory your agent client scans:
 
 ```powershell
 python -m solidworks_mcp --install-skill "D:\path\to\agent\skills"
 ```
 
 Keep the skill and the server in sync: the skill names the tools it calls.
+For drawing images, `view_reference_image` returns a local PNG/JPEG as image
+content; image interpretation remains with the agent. The tool does not OCR,
+trace, calibrate scale or reconstruct geometry.
 
 ## Tool surface
 
 Run `python -m solidworks_mcp --list-tools` for the authoritative catalog.
-127 tools across:
+143 tools across the default profile (46 `core`, 97 `extended`):
 
 | Domain | Examples |
 |---|---|
 | Session / documents | `get_status`, `get_capabilities`, `new_document`, `open_document`, `save_document`, `close_document`, `search_tools`, `set_file_property` (custom properties for title-block links) |
 | Sketch | `create_sketch`, `edit_sketch`, `list_sketches`, `sketch_rectangle`, `sketch_circle`, `sketch_line`, `sketch_arc`, `sketch_arc_3point`, `sketch_ellipse`, `sketch_slot`, `sketch_point`, `sketch_polygon`, `sketch_spline`, `sketch_trim`, `sketch_fillet`, `sketch_chamfer`, `sketch_mirror`, `sketch_construction`, `sketch_offset`, `sketch_convert_entities`, `sketch_add_dimension`, `sketch_add_relation`, `list_sketch_segments`, `list_dimensions`, `set_dimension` |
-| Features | `boss_extrude`, `cut_extrude`, `revolve`, `fillet`, `chamfer`, `shell`, `simple_hole`, `draft`, `sweep`, `loft`, `set_feature_suppression`, `linear_pattern`, `circular_pattern`, `mirror_feature`, `set_material`, `set_appearance`, `rename_feature`, `delete_feature` |
+| Features | `boss_extrude`, `cut_extrude`, `revolve`, `revolve_cut`, `thin_extrude`, `fillet`, `chamfer`, `shell`, `simple_hole`, `counterbore_hole`, `countersink_hole`, `tapped_hole`, `cosmetic_thread`, `dome`, `draft`, `sweep`, `loft`, `set_feature_suppression`, `linear_pattern`, `circular_pattern`, `mirror_feature`, `set_material`, `set_appearance`, `rename_feature`, `delete_feature` |
 | Reference geometry | `create_reference_plane`, `create_axis`, `list_reference_planes` |
-| Inspection | `list_features`, `list_faces` (surface/normal/area filters), `list_edges` (curve/length filters), `list_bodies`, `list_vertices`, `measure`, `get_mass_properties`, `get_bounding_box`, `check_errors` |
-| View / export | `set_view`, `capture_screenshot`, `export_document`, `verify_export` |
+| Inspection | `list_features`, `inspect_editable_features`, `list_faces` (surface/normal/area filters), `list_edges` (trimmed endpoints and closed-edge state), `list_bodies`, `list_vertices`, `measure`, `get_mass_properties` (typed accuracy), `get_bounding_box` (exact extrema), `compare_model_geometry` (explicit caller tolerances), `check_errors` |
+| View / export | `set_view`, `capture_screenshot`, `view_reference_image` (local PNG/JPEG input as image content; absolute local paths or output-root-relative paths; bounded size/resolution), `export_document`, `verify_export` |
 | Assemblies | `insert_component`, `list_components`, `set_component_transform`, `set_component_fixed`, `add_mate`, `list_mates`, `check_interference`, `get_assembly_bounding_box` |
-| Drawings | `new_drawing` (framed A3 default), `drawing_set_iso_units`, `drawing_set_sheet_format`, `list_drawing_sheets`, `drawing_add_sheet`, `drawing_activate_sheet`, `drawing_insert_view`, `drawing_insert_standard_views`, `drawing_insert_projected_view`, `drawing_insert_section_view`, `drawing_insert_detail_view`, `drawing_activate_view`, `drawing_set_view`, `drawing_create_sketch`, `drawing_insert_center_marks`, `drawing_insert_centerlines`, `list_drawing_views`, `list_drawing_view_edges`, `drawing_insert_model_dimensions`, `drawing_auto_dimension` (arranged), `drawing_arrange_dimensions`, `drawing_add_dimension` (picked edges), `list_drawing_dimensions`, `drawing_set_dimension_tolerance`, `drawing_insert_general_tolerance_table`, `drawing_insert_datum`, `drawing_insert_gtol`, `drawing_insert_surface_finish`, `drawing_insert_revision_table`, `drawing_add_revision`, `drawing_insert_bom_table`, `drawing_insert_balloons`, `drawing_insert_hole_callout`, `drawing_add_note`, `list_drawing_annotations`, `drawing_move_annotation`, `drawing_delete_annotation`, `drawing_set_annotation_text`, `drawing_delete_view`, `list_drawing_properties`, `drawing_set_property`, `drawing_manifest`, `drawing_layout_audit` (estimated annotation boxes, collisions, off-frame items), `drawing_preflight`, `validate_iso_drawing` |
+| Drawings | `new_drawing` (framed A3 default), `drawing_set_iso_units`, `drawing_set_sheet_format`, `list_drawing_sheets`, `drawing_add_sheet`, `drawing_activate_sheet`, `drawing_insert_view` (explicit model/configuration), `drawing_insert_standard_views`, `drawing_insert_projected_view`, `drawing_insert_section_view`, `drawing_insert_detail_view`, `drawing_activate_view`, `drawing_set_view`, `drawing_create_sketch`, `drawing_insert_center_marks`, `drawing_insert_centerlines`, `list_drawing_views`, `list_drawing_view_edges`, `drawing_insert_model_dimensions`, `drawing_auto_dimension`, `drawing_arrange_dimensions`, `drawing_add_dimension`, `list_drawing_dimensions` (stable state IDs), `drawing_audit_feature_coverage`, `drawing_set_dimension_tolerance`, `drawing_insert_general_tolerance_table`, `drawing_insert_datum`, `drawing_insert_gtol`, `drawing_insert_surface_finish`, `drawing_insert_revision_table`, `drawing_add_revision`, `drawing_insert_bom_table`, `drawing_insert_balloons`, `drawing_insert_hole_callout`, `drawing_add_note`, `list_drawing_annotations`, `drawing_update_annotations` (typed batch), `drawing_move_annotation`, `drawing_delete_annotation`, `drawing_set_annotation_text`, `drawing_delete_view`, `list_drawing_properties`, `drawing_set_property`, `drawing_manifest`, `drawing_layout_audit` (full-sheet text screening and revision-table bounds), `drawing_preflight`, `validate_iso_drawing` |
 | Transactions | `create_checkpoint`, `list_checkpoints`, `rollback_to_checkpoint` |
 
 ## Testing
@@ -242,10 +248,12 @@ python -m pytest tests/unit
 # live acceptance: needs a running SOLIDWORKS session
 python scripts/mcp_smoke.py            # MCP over stdio, box volume vs hand calc
 python scripts/acceptance.py           # 43 geometry checks (fillet, shell, cut, revolve, dimensions, patterns, mirror, reference planes, arcs/slots/ellipses, trim/mirror/fillet/chamfer, hole, draft, sweep, loft, suppression, axis, measure)
+python scripts/acceptance_modelling_depth.py # 26 Wave-1 3D feature checks vs hand calculations
 python scripts/acceptance_asm_drw.py   # assembly + drawing checks (mates read-back, fix/float, interference, framed sheets, projected/section/detail views, center marks, appearance, arranged dimensions, ISO properties/validation, PDF/DXF verification)
 python scripts/acceptance_asm_drw.py drawing_tools  # run a named group only
 python scripts/acceptance_iso_annotations.py        # ISO annotation suite (tolerances, datums/GD&T, surface finish, revision table)
 python scripts/acceptance_drawing_edit.py           # annotation edit + picked-geometry dimensions + checkpoint/rollback
+python scripts/acceptance_reliability.py            # precision diagnostics, real cut rollback, explicit-tolerance comparison
 python scripts/iso_drawing_demo.py                  # end-to-end ISO drawing demo (closes its documents when done)
 python scripts/iso_flange_demo.py                   # revolved flange housing part + full ISO A3 drawing, 76 checks
 ```

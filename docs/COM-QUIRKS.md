@@ -6,6 +6,49 @@ the mitigation in this codebase.
 
 ## Binding / dispatch
 
+### Active-remodel findings (2026-09-27)
+
+- Reproduced with `24-01-10.SLDPRT`; evidence and task scripts are under
+  `artifacts/active-remodel`. `new_drawing` can report one model while
+  `drawing_insert_standard_views(model=None)` inserts views of another open
+  part. Pass the model path explicitly and verify every view's reference.
+- `IView.SetDisplayMode3` and `GetDisplayMode2` use **swDisplayMode_e**, not
+  `swViewDisplayMode_e`. The current drawing map uses the latter, so asking
+  for hidden-lines-grayed passes 3 and renders shaded. Installed constants:
+  wireframe=0, hidden-visible=1, hidden-removed=2, shaded=3. The tool's own
+  reverse map can falsely confirm the requested mode; inspect the rendering.
+- `InsertModelAnnotations` is not universally inert on 34.0.0: this task
+  imported 18 dimensions from the original and 5 from the reconstructed part.
+  The older no-import observations below are context-specific, not a blanket
+  build limitation. Verify the before/after inventory on each document.
+- `GetPartBox` is approximate. The remodel reported 135.0739 x 65.0739 x 85 mm;
+  six `IBody2.GetExtremePoint` calls returned 135 x 65.000012 x 85 mm. Its
+  mass/volume and 27-face topology closely match the original; it has one
+  additional edge. Do not use the approximate box for precision acceptance.
+- Default mass-property volume also has numerical sensitivity on this curved
+  fixture. `IModelDocExtension.GetMassProperties2(2, 0, False)` (maximum
+  accuracy, plain out-status value) changed original/remodel volumes from
+  200016.234984/200016.444495 to 200014.289394/200014.497354 mm3, status 0.
+  The independent analytic nominal was 200013.615903 mm3: a strict +/-0.5 mm3
+  absolute check still failed. Record accuracy and numerical limits; do not
+  declare exact equivalence from rounded mass-property agreement alone.
+- Part `list_edges` reports untrimmed/evaluated points as endpoints on this
+  fixture (some about 1000 mm outside the part). Actual `GetStartVertex` and
+  `GetEndVertex` coordinates are correct. The drawing-edge path already uses
+  vertices; the part path needs the same treatment.
+- A counterbore's pilot may build before the second selection fails: reusing
+  the original face dispatch after `SimpleHole2` can fail. In this task the
+  caller also supplied sketch coordinates to an offset-based API; those are
+  distinct issues. `face_point_from_offsets` uses the face minimum corner and
+  ascending model axes, which the public schema should state explicitly.
+- Sheet pseudo-views may have no `sheet_name`; `_named_view` filters them out
+  even though annotation listing reports `Sheet1`. For the active sheet,
+  `IDrawingDoc.GetFirstView` gives the wrapped sheet pseudo-view. The stock
+  drawing in this task had duplicate title-block notes. Edit both inventories,
+  enter `EditTemplate`, and finish with `EditSheet`; `INote.SetText` can return
+  multiline text with CRLF, so normalize line endings for read-back checks.
+
+
 - `EnsureModule(LIBID, 0, 0, 0)` fails with `Library not registered`; only the
   exact registered major version works. Mitigation: probe majors 40..20 in
   `com/binding.py` (SW2026 = 34).
@@ -73,6 +116,36 @@ the mitigation in this codebase.
 - `IEdge` has no `GetLength`; compute length from
   `edge.GetCurveParams()` (`params[6]`, `params[7]`) plus
   `ICurve.GetLength3(start_param, end_param)`.
+
+### Engineer-selection reads and entity references (measured 2026-10-01)
+
+- `ISelectionMgr.GetSelectedObjectCount2(-1)` counts across marks;
+  `GetSelectedObject6(index, -1)` returns the object and
+  `GetSelectedObjectType3(index, -1)` its **swSelectType_e** (edges=1, faces=2,
+  vertices=3). Use the type to pick the interface: QueryInterface to `IFace2`
+  on an **edge** dispatch does not raise, so interface probing alone
+  misclassifies; a member probe (`GetArea`/`GetCurve`/`GetPoint`) also works.
+  Mitigation: `domain/references.py` keys the kind off the selection type.
+- `IModelDocExtension.GetPersistReference3(entity)` returns a **VARIANT**
+  (pywin32 `memoryview`, 367-389 bytes on the probe part), not a string;
+  normalise with `bytes(bytearray(...))`.
+  `GetObjectByPersistReference3(persistId, errorCode)` takes the VARIANT plus a
+  plain out value (never a VARIANT) and returns `(object, error_code)` through
+  `session.com_result`; error code 0 is success.
+  `IsSamePersistentID(a, b)` gives exact identity between two references.
+- Persist references survived, on the probe part: immediate round-trip,
+  save-close-reopen, a topology-changing rebuild (a disjoint second body), and
+  a through-cut of the referenced face itself (resolved to the same face with
+  the hole: area 6000 -> 5921.46 mm2, volume 154000 -> 152037 mm3).
+  Evidence: `scripts/probe_persist_reference.py` (17/17).
+- A reference captured in an unsaved document and used after **Save As** fails
+  the document-scope check: Save As changes title and path, which is a
+  legitimate identity change. Capture references against a saved document
+  (Datum's workflow binds proposals the same way).
+- Fingerprint fallback: surface/curve, area/length, normal, bounding box, and
+  edge endpoints/centres were unique (one match) on the probe part; matching
+  uses small tolerances (`references.py`) and fails on zero or multiple
+  matches. Do not widen tolerances without measuring ambiguity.
 
 ## Sketch editing (measured 2026-09-26)
 
@@ -240,8 +313,10 @@ the mitigation in this codebase.
   min 0.0 / max 0.015 mm).
 - `InsertGeneralToleranceTableAnnotation` exists on this typelib for
   **parts/assemblies** (MBD context) and returns `None` on a drawing; the 2D
-  ISO 2768-mK path is a general tolerance note. Its `X`/`Y` parameters are
-  `long` (API units), unlike the double sheet coordinates elsewhere.
+  drawing path therefore uses a general-tolerance note only when the design
+  authority has supplied the applicable standard/class. Do not use the
+  withdrawn combined ISO 2768-mK callout as a default. Its `X`/`Y` parameters
+  are `long` (API units), unlike the double sheet coordinates elsewhere.
 - Annotation attachment: `IView.SelectEntity(entity, append)` takes the
   entity from `IView.GetVisibleEntities2(None, 1)`. Those come back as
   untyped `IEntity` dispatches; `GetCurve` is only reachable after
@@ -334,6 +409,10 @@ the mitigation in this codebase.
   one drawing succeeded; the earlier "only one projection per drawing" note
   was selection-state fallout. An earlier measurement still found projections
   returning `None` once a second sheet exists — add them before extra sheets.
+  On SW2026 SP0.0, projected views read back their type, position, model path
+  and configuration, but `GetOrientationName` is absent from the view listing.
+  Verify first/third-angle orientation from the sheet setting, projection
+  symbol, placement and raster; do not claim direct orientation read-back.
 - `IDrawingDoc.ActiveDrawingView` can raise `Member not found` right after a
   view is created; treat it as advisory.
 - `swCreateSectionViewAtOptions_e` on this typelib is NotAligned=1,
@@ -442,12 +521,158 @@ the mitigation in this codebase.
 
 ## Feature API signatures (from this typelib, not the docs)
 
+- Read-only typelib probe `python scripts/probe_api.py --enum
+  swBodyOperationType_e` reports `SWBODYINTERSECT=15901`, `SWBODYCUT=15902`,
+  `SWBODYADD=15903`, confirming (not disproving) the numeric `OPS` constants
+  in `scripts/probe_combine_bodies.py`. This validates enum values only; it does
+  not establish live operation success.
+- `IFeatureManager.InsertCombineFeature(OperationType, MainBody, ToolVar)` takes
+  3 arguments; `ToolVar` is a `VARIANT` array of `IBody2` dispatches. Live probe
+  on SOLIDWORKS 2026 SP0.0 / typelib 34.0 (2026-10-03), using the overlapping
+  rectangular-prism fixture in `scripts/probe_combine_bodies.py`, confirmed
+  subtraction only: `VT_ARRAY | VT_DISPATCH` built with
+  `win32com.client.VARIANT` succeeded, while tuple/list did not. The larger
+  prism (1200 mm3) as MainBody minus the 400 mm3 overlap produced one `Combine1`
+  body at 800 mm3 (expected 800; pass), bbox [5,2,0]-[15,12,12], 9 faces / 21
+  edges. Rebuild succeeded and What's Wrong count was 0.
+- In that same run, **add** returned no feature for all six script attempts
+  (tuple, list, typed dispatch array, single dispatch, reversed main body, and
+  selected bodies). Rebuild succeeded and What's Wrong count was 0, but the two
+  source bodies remained unchanged: body count 2, measured 2200 mm3 vs expected
+  1800 mm3 (+400; fail). **Common/intersect** likewise returned no feature for
+  all six attempts; rebuild succeeded and What's Wrong count was 0, but the two
+  source bodies remained unchanged: body count 2, measured 2200 mm3 vs expected
+  400 mm3 (+1800; fail). A clean rebuild / zero What's Wrong does **not** mean
+  add/common succeeded. A follow-up isolated probe on SOLIDWORKS 2026 SP0.0 /
+  typelib 34.0 (2026-10-03), `scripts/probe_combine_isolated.py`, tested add and
+  common once each in separate fresh scratch parts, using explicit MainBody plus
+  one-element `VT_ARRAY | VT_DISPATCH` ToolVar and no preselection. Both calls
+  returned no feature and added no feature-tree names. Each rebuild succeeded,
+  What's Wrong count was 0, and the two source bodies remained unchanged (2
+  bodies, 2200 mm3). Add expected 1800 mm3 (+400; fail); common expected 400 mm3
+  (+1800; fail). Thus fresh-document isolation did not resolve either operation;
+  a clean rebuild / zero What's Wrong still does not imply success. Investigate
+  the API/operation contract further; at that probe stage the combine tool was
+  withheld and add/common semantics were unresolved. A selected-body follow-up on 2026-10-03,
+  `scripts/probe_combine_selected_bodies.py`, selected both bodies with
+  `inspect.select_bodies` before the same single typed-array call (explicit
+  MainBody, no retry variants), once per operation in separate scratch parts.
+  Both selections succeeded (2 bodies selected), but add and common again
+  returned no feature and no feature-tree delta; rebuild succeeded, What's Wrong
+  count was 0, and both source bodies remained unchanged (2 bodies, 2200 mm3).
+  Add expected 1800 mm3 (+400; fail); common expected 400 mm3 (+1800; fail).
+  Thus preselecting both bodies does not resolve either operation. A direct
+  interface probe, `scripts/probe_combine_direct_interface.py` (2026-10-03),
+  wrapped `FeatureManager` as `IFeatureManager` and the tool body as `IBody2`,
+  then attempted one call for add using
+  `IInsertCombineFeature(15903, MainBody, 1, ToolBody)`. That call raised
+  `com_error` (-2147352567): "Unable to read write-only property." The scratch
+  document was discarded; per stop-on-error policy common was not called, so
+  there are no direct-interface results for common. This is a call/signature or
+  marshalling failure, not an operation measurement. A subtraction positive
+  control (15902) through the same direct interface, with both bodies selected,
+  explicit MainBody, ToolsCount=1, and wrapped IBody2 tool, raised the same
+  HRESULT. Wrapper types were generated `IFeatureManager` and `IBody2` for
+  typelib 34.0; `excepinfo` identified SOLIDWORKS Design: "Unable to read
+  write-only property." (`argerror=None`). It stopped before feature/tree/rebuild/
+  body/volume inspection; cleanup discarded the scratch part. This does not
+  disprove the existing array-call subtraction result: the direct-interface
+  candidate failed even for the positive control. A separate
+  `IPartDoc.InsertCombineFeature` subtraction control
+  (`scripts/probe_combine_ipartdoc_subtract.py`, 2026-10-04) succeeded: both
+  bodies selected; wrappers were generated `IPartDoc` and `IBody2`; returned
+  Python `True`; feature tree gained `Combine1`; rebuild succeeded, What's Wrong
+  count 0, one body, volume 800 mm3 (expected 800; pass; bbox [5,2,0]-[15,12,12],
+  9 faces / 21 edges). A repeat run on the same target reproduced the result
+  exactly. This validates the IPartDoc method for subtraction only. A read-only
+  definition inspection (`scripts/probe_combine_definition_readonly.py`, 2026-10-04)
+  found `Combine1` type `CombineBodies`; `GetDefinition()` returned raw
+  `win32com.client.CDispatch`, wrapped as generated
+  `ICombineBodiesFeatureData`. Read-back: `OperationType=1`, `MainBody` returned
+  an `IBody2` wrapper, `GetBodiesToCombineCount=1`, while `BodiesToCombine` read
+  back as `None`. No `AccessSelections`, `ReleaseSelectionAccess`, or
+  `ModifyDefinition` call was made; no COM error occurred. The read-only local
+  typelib command `python scripts/probe_api.py --enum
+  swCombineBodiesOperationType_e` reports Add=0, Subtract=1, Common=2. This is a
+  distinct enum from `swBodyOperationType_e` used by the insertion methods:
+  SWBODYADD=15903, SWBODYCUT=15902, SWBODYINTERSECT=15901. The OperationType=1
+  read-back matches Subtract in the feature-data enum, not the insertion enum.
+  Feature-data enum values were exercised in one controlled
+  `ModifyDefinition` probe (`scripts/probe_combine_modify_definition.py`,
+  2026-10-04): each fresh part first created a verified subtraction feature,
+  then changed only `OperationType` and called `IFeature.ModifyDefinition(data,
+  doc, None)` once, without selection-access calls. For Add=0, ModifyDefinition
+  returned True, the Combine1 tree entry remained, rebuild succeeded, What's Wrong
+  count was 0, body count 1, and volume was 1800 mm3 (expected 1800; pass; bbox
+  [0,0,0]-[15,12,12], 11 faces / 27 edges). For Common=2, it returned True, the
+  Combine1 tree entry remained, rebuild succeeded, What's Wrong count was 0, body
+  count 1, and volume was 400 mm3 (expected 400; pass; bbox [5,2,0]-[10,10,10],
+  6 faces / 12 edges). The prior `BodiesToCombine=None` with count 1 remains an
+  unexplained readback limitation; no AccessSelections was used. These exact
+  fixtures pass via ModifyDefinition; direct IPartDoc add/common insertion remains
+  unsuccessful and is not the implemented route. The follow-up add/common probe, `scripts/probe_combine_ipartdoc_add_common.py` (2026-10-04),
+  selected both bodies and made one `IPartDoc.InsertCombineFeature` call per
+  operation in separate fresh parts. Both returned Boolean `False` with no new
+  feature-tree names; rebuild succeeded, What's Wrong count was 0, and 2 unchanged
+  bodies remained at 2200 mm3. Add expected 1800 mm3 (+400; fail); common expected
+  400 mm3 (+1800; fail). Those direct IPartDoc calls failed; do not infer success
+  from their Boolean or clean rebuild. The separate ModifyDefinition path above
+  passes these exact fixtures and is the measured basis for the typed tool; support
+  remains limited to those fixture geometries. Probe history is in
+  `scripts/probe_combine_bodies.py`. The typed
+   extended-tier `combine_bodies` tool is registered and follows this measured path: subtract
+   calls `IPartDoc.InsertCombineFeature(15902, ...)`; add/common seed that verified
+   subtraction and alter only `ICombineBodiesFeatureData.OperationType` (0/2) via
+   one `ModifyDefinition`. Its mocked unit tests exercise dispatch, validation,
+   postconditions and rollback without SOLIDWORKS. `scripts/acceptance_combine_bodies.py`
+   now runs the registered MCP tool over stdio against fresh fixtures: subtract 600 mm3,
+   add 1800 mm3 and common 400 mm3 all passed (26/26 checks, 2026-11-16), with one body,
+   one `Combine1` feature, clean rebuild and What's Wrong 0; an equal-index request was
+   rejected as `INVALID_PARAMETER` with the two source bodies unchanged at 2200 mm3.
+   `GetBodies2` enumeration order did not follow creation order in that run (the second
+   prism came back at index 0), so callers must resolve indices from `list_bodies` and
+   the tool must keep using the same enumeration for validation and selection. This
+   acceptance does not widen the evidence: only the overlapping rectangular-prism
+   fixture and exact operations/volumes above were live-measured on SW2026 SP0.0 /
+   typelib 34.0. Do not generalize support to other geometries, versions, or
+   configurations until separately live-accepted.
 - `FeatureExtrusion3` takes **23 arguments**.
 - `FeatureCut4` takes **27 arguments**.
+- Reference end conditions on `FeatureExtrusion3` / `FeatureCut4` require the
+  profile sketch selected with mark 0 and the target selected with mark 1.
+  `UpToSurface=4`, `OffsetFromSurface=5`, `UpToVertex=3`, and `UpToBody=7`
+  build and pass exact volume checks. `OffsetReverse1=True` extends past the
+  reference (plane z=30, offset +5 -> z=35); False pulls back to z=25. The
+  public offset convention is positive = beyond, negative = back toward the
+  sketch. `IBody2.Select2(append, ISelectData)` is required for body targets.
+- `FeatureBossThin2` takes the first 24 arguments of the thin-feature call;
+  `FeatureCutThin2` takes 29 here. Both need `Dir=True` in the measured
+  working calls. Preserve the just-closed sketch selection: clearing it makes
+  both thin APIs return/build nothing. `RevThinDir` 0/1/2 means outward / inward
+  / mid; the r=20, t=2, depth=10 ring checks read 2638.94 / 2387.61 / 2513.27
+  mm3 respectively.
 - `FeatureRevolve2` takes **20 arguments**.
+- `FeatureRevolveCut2` takes **10 arguments**; the angle is argument 1 and a
+  construction centerline in the newest sketch supplies the axis.
 - `FeatureFillet3` takes **14 arguments**.
+- Face fillet is `Ftyp=2` with the two faces selected at mark 0. It matched the
+  hand-calculated cube-corner blend volume. Variable-radius `FeatureFillet3`
+  builds a feature but the passed radii do not match the expected uniform or
+  end-radius geometry; `IVariableFilletFeatureData2.GetRadius` raises an
+  internal application error on the tested feature. Keep variable-radius,
+  asymmetric and full-round variants withheld until read-back is reliable.
 - `InsertFeatureChamfer` takes **8 arguments** (`Options=4`,
-  `ChamferType=1` for equal-distance chamfers).
+  type 1 is angle-distance (45 degrees gives equal-distance); type 2 is
+  distance-distance. Type 16, although named EqualDistance in the typelib,
+  builds a feature with no volume change in tested parameter combinations.
+- `IModelDoc2.InsertDome(height, reverse, elliptic)` returns void and needs its
+  selected face at mark 1; mark 0 silently builds nothing. A circular face
+  produced the spherical-cap volume `pi*h/6*(3a^2+h^2)` exactly.
+- `InsertCosmeticThread2(Type, first_double, second_double, Note)` has
+  misleading typelib names: the first double reads back as `Diameter`, and the
+  second as `BlindDepth`. On a tapped edge the cosmetic feature nests below the
+  hole rather than appearing in the top-level feature walk; check the returned
+  feature definition. A single thread rebuilt with zero What's Wrong errors.
 - `FeatureLinearPattern5` takes **22 arguments** (`FeatureLinearPattern4`
   takes 20); use pattern 5 on this build.
 - `FeatureCircularPattern5` takes **14 arguments**.
@@ -523,6 +748,62 @@ the mitigation in this codebase.
 - `IVertex.GetPoint()` returns the model-space position in metres.
 - `list_vertices` indices follow `GetBodies2 -> GetVertices` order, the same
   order `select_vertices` uses.
+
+## Diagnostics and review drawing updates (2026-09-28)
+
+- `swDisplayMode_e` values on typelib 34.0 are wireframe=0,
+  hidden-lines-grayed=1, hidden-lines-removed=2, shaded=3,
+  faceted-wireframe=4, faceted-hidden-grayed=5, faceted-hidden-removed=6,
+  shaded-with-edges=7, default=8. `swViewDisplayMode_e` is a different enum.
+  Read `IView.GetDisplayMode2` after `SetDisplayMode3`; matching the wrong enum
+  can report success while rendering a different mode.
+- `IModelDocExtension.GetMassProperties2(Accuracy, Status, UseSelected)` is
+  `GetMassProperties2(2, 0, False)` for maximum accuracy on this build. Pass a
+  plain integer for the status out parameter and split it with
+  `session.com_result(result, 1)`. The returned array starts with SI centre
+  of mass X/Y/Z, volume, area, then mass (the documented array order);
+  status 0 was successful in the measured fixture.
+- `IBody2.GetExtremePoint(X, Y, Z, OutX, OutY, OutZ)` returns a Boolean plus
+  three metre-valued out coordinates. Query +/- each model axis per solid
+  body and combine extrema; this is more precise than `GetPartBox`.
+- `IEdge.GetStartVertex`/`GetEndVertex` provide trimmed topological endpoints.
+  A closed edge can return no distinct endpoints; report its closed state
+  instead of evaluating an untrimmed curve at arbitrary parameters.
+- Face-offset placement uses the face bounding-box minimum corner as origin,
+  with ascending model X/Y axes in millimetres independent of normal sign.
+  `GetTessTriangles(True)` is in system metres and can screen whether a point
+  lies on trimmed tessellated face regions; it remains tessellation-based.
+- `swConstrainedStatus_e` on this typelib is unknown=1, under=2, fully=3,
+  over=4, no-solution=5, invalid-solution=6, autosolve-off=7.
+  `ISketch.ModelToSketchTransform` returns `IMathTransform`; the transform
+  `ArrayData` contains the rotation, translation, and scale. `ISketch` exposes
+  no degrees-of-freedom count accessor on this build, so report DOF as
+  unavailable rather than deriving it from entity counts.
+- `IFeature.GetDefinition()` returns an untyped `IDispatch`. The measured
+  extrude/cut parameter path is to wrap it as `IExtrudeFeatureData2` and call
+  `GetDepth(True/False)`; the values are metres. The live boss created by
+  `FeatureExtrusion3` reports `GetTypeName2() == "Extrusion"`, so the diagnostic
+  dispatch includes that type in addition to Boss/Cut aliases. Other feature definitions
+  remain unavailable until their interface and access sequence are probed.
+- A typelib-only inspection suggested `IView.ReferencedConfiguration` was
+  write-only, but live acceptance on 34.0.0 read `Default` back successfully
+  for all three inserted standard views. Prefer actual view readback and
+  report unavailable only when the getter fails. `GetReferencedModelName`
+  provides the view's model identity.
+- Closed circular edges may have no vertices. Countersink/thread edge lookup
+  must use `ICurve.CircleParams` centre/axis/radius, not `start_mm`. Live
+  modelling-depth acceptance caught this dependency after endpoint repair.
+- Revision-table extents can be measured from the `IAnnotation` position and
+  `ITableAnnotation` row/column sizes. The annotation position is the
+  bottom-left on this build; convert the table dimensions from metres.
+- `HoleWizard5` exists in typelib 34.0, but the exploratory call crashed in
+  `mfc140u.dll` on SOLIDWORKS 2026 SP0.0. Native Hole Wizard creation is
+  withheld until a safe known-good acceptance path exists. Current compound
+  hole features are geometry-only and have no native callout semantics.
+- PDF text extraction is not sufficient evidence for diameter or degree
+  glyph rendering. Verify meaning through SOLIDWORKS annotation data and a
+  rendered raster. The MCP server already serializes screenshot payloads as
+  image content blocks; do not move image base64 into JSON text or logs.
 
 ## Environment
 

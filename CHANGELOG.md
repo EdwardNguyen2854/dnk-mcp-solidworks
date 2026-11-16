@@ -8,6 +8,51 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Selection references for engineer-in-the-loop workflows: `get_selection`
+  reads the engineer's current selection as bounded, labeled entity references;
+  `resolve_entity_reference` revalidates them against the active document using
+  SOLIDWORKS persist references with a geometric-fingerprint fallback and
+  explicit failure codes (`REFERENCE_NOT_FOUND`, `REFERENCE_AMBIGUOUS`,
+  `REFERENCE_DOCUMENT_MISMATCH`); `highlight_entities` transiently selects
+  referenced entities as a view action. Live acceptance:
+  `scripts/acceptance_selection.py` (11/11); identity measurement:
+  `scripts/probe_persist_reference.py` (17/17).
+- Geometry and model diagnostics: maximum-accuracy mass properties with status,
+  exact body extrema, trimmed edge endpoints/closed state, tessellation-based
+  model comparison with required caller tolerances, sketch constraint state and
+  source-plane transforms, and probed extrude/cut depth readback.
+- Explicit drawing references: view insertion now requires an open model
+  reference and configuration, verifies the referenced model on the created
+  view, and reports the configuration readback limit of typelib 34.0.
+- Feature-aware dimension coverage: dimension state IDs and
+  `drawing_audit_feature_coverage` detect missing critical coverage, stale IDs,
+  and duplicate assignments using a caller-provided feature map.
+- Typed batch annotation updates resolve stable IDs, rebuild once, verify
+  readback, and roll back captured values on failure. Full-sheet layout audit
+  now includes title-block/frame notes and exact revision-table bounds where
+  the table API exposes them.
+- A `cad-remodel` skill and updated review-drawing skills define separate
+  source preservation, geometry comparison, full-sheet raster checks, and
+  review-versus-release gates.
+- An `image-assisted-modeling` skill guides image-referenced part creation with
+  explicit known/estimated/unknown geometry, clarification gates, editable
+  features, measured checks, and screenshot review. It does not claim automatic
+  image-to-CAD conversion; image interpretation stays in the agent client.
+- Native Hole Wizard creation remains guarded: the exploratory call crashed in
+  `mfc140u.dll` on SW2026 SP0.0. Compound hole tools report geometry-only
+  semantics and do not claim native hole-callout support.
+- Wave-1 3D feature depth: reference extrude/cut end conditions (up-to-surface,
+  offset-from-surface, up-to-body, up-to-vertex), `revolve_cut`, `thin_extrude`,
+  face fillets, chamfer variants, `cosmetic_thread`, `counterbore_hole`,
+  `countersink_hole`, `tapped_hole` and `dome`. Added the `select_bodies`
+  helper. Live hand-calculation suite: `scripts/acceptance_modelling_depth.py`
+  (26/26 passed); existing part acceptance remains 43/43.
+- Wave-2 `combine_bodies` (add/subtract/common) is live-accepted through the
+  registered MCP tool: `scripts/acceptance_combine_bodies.py` (26/26) checks
+  measured volumes against hand calculations, one resulting body, one new
+  Combine feature, clean rebuild, and pre-COM rejection of invalid indices.
+  Evidence remains limited to the overlapping rectangular-prism fixture on
+  SW2026 SP0.0; other geometry and versions are unverified.
 - Drawing annotation editing: `list_drawing_annotations` now reports a stable
   per-view `index`, the dimension `reading` (value with prefix/suffix) and a
   note's `resolved_text` for `$PRP` property links. New tools
@@ -36,12 +81,11 @@ All notable changes to this project are documented here. The format follows
 - `list_drawing_annotations` resolves `$PRP`/`$PRPSHEET` note links to their
   displayed text (`resolved_text`), including referenced-model properties and
   `SW-File Name`.
-- `drawing_layout_audit`: screens the sheet with estimated annotation boxes
-  (position + character count), reporting collisions (overlaps and
-  near-misses), off-frame items, and skipping sheet-format content (border
-  band and the title block, the latter derived from its property-linked
-  notes). `drawing_insert_datum` now reports the measured tag position and
-  warns when datum tags land within 10 mm of each other.
+- `drawing_layout_audit`: screens all returned sheet text, including title-
+  block and frame notes, with estimated annotation boxes; it reports
+  collisions, duplicate notes, off-frame items, and exact revision-table
+  bounds where available. Raster inspection remains required for leaders,
+  rendered glyphs, line weights, and actual text overflow.
 - Drawing annotation depth: `list_drawing_view_edges` (index-addressed
   visible edges), `list_drawing_dimensions`, `drawing_set_dimension_tolerance`
   (symmetric, bilateral, limits, min/max, ISO fit), `drawing_insert_datum`,
@@ -54,17 +98,18 @@ All notable changes to this project are documented here. The format follows
   `readable_dimensions` and title-block link checks).
 - Bundled workflow skills: `skills/iso-engineering-drawing/SKILL.md`,
   `skills/cad-house-standard/SKILL.md`,
-  `skills/drawing-acceptance/SKILL.md` and `skills/sheet-layout/SKILL.md`,
+  `skills/drawing-acceptance/SKILL.md`, `skills/sheet-layout/SKILL.md` and
+  `skills/cad-remodel/SKILL.md`,
   plus `python -m solidworks_mcp --install-skill <dir>` to copy them into an
   agent's skills directory.
 - Optional HTTP transport alongside stdio.
 
 ### Changed
 
-- Tool surface: 100 -> 127 tools (39 core / 88 extended); README, AGENTS.md
+- Tool surface: 134 -> 138 tools (42 core / 96 extended); README, AGENTS.md
   and the skill pack are in sync with the catalog.
-- Unit suite: 69 tests, including checkpoint path/type and PDF page-count
-  regressions.
+- Unit suite includes checkpoint path/type, PDF page-count, geometry comparison,
+  feature coverage, and image-content regressions.
 - Live suites: 43 part-geometry, 68 assembly/drawing, 50 ISO-annotation and
   28 drawing-edit checks (`scripts/acceptance_drawing_edit.py`).
 

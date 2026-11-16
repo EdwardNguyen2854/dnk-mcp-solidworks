@@ -116,6 +116,37 @@ def list_bodies(args: dict) -> dict:
 
 
 @registry.tool(
+    "combine_bodies",
+    "Combine one tool body into a main body. Indices come from the current "
+    "list_bodies result; supported operations are add, subtract and common.",
+    obj(
+        {
+            "operation": string(
+                "combine operation", enum=["add", "subtract", "common"]
+            ),
+            "main_body_index": integer(
+                "main body index from list_bodies", minimum=0
+            ),
+            "tool_body_index": integer(
+                "single tool body index from list_bodies", minimum=0
+            ),
+        },
+        required=("operation", "main_body_index", "tool_body_index"),
+    ),
+    tier="extended",
+    tags=("features", "bodies"),
+)
+def combine_bodies(args: dict) -> dict:
+    def job() -> dict:
+        checkpoint.maybe_auto_checkpoint()
+        return features.combine_bodies(
+            args["operation"], args["main_body_index"], args["tool_body_index"]
+        )
+
+    return envelope(run(job))
+
+
+@registry.tool(
     "fillet",
     "Round the selected edges (kind=constant, indices from list_edges) or "
     "blend between two faces (kind=face, two face_indices that meet at the "

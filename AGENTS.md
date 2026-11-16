@@ -8,7 +8,7 @@ Current test target: SOLIDWORKS 2026 SP0.0, typelib 34.0, Python 3.12.
 
 ```powershell
 python -m pip install -e ".[dev]"          # editable install (deps already in system Python)
-python -m pytest tests/unit -q             # 69 unit tests, no SOLIDWORKS needed
+python -m pytest tests/unit -q             # unit tests, no SOLIDWORKS needed
 python -m solidworks_mcp --list-tools      # tool catalog with tiers
 python -m solidworks_mcp --check           # live capabilities (requires SOLIDWORKS)
 python scripts/probe_api.py --method IFeatureManager FeatureExtrusion3 --brief
@@ -22,7 +22,11 @@ work first:
 
 ```powershell
 python scripts/mcp_smoke.py            # MCP-over-stdio loop: part -> extrude -> measure
+python scripts/probe_persist_reference.py    # entity identity: persist references + fingerprints
+python scripts/acceptance_selection.py       # selection read / reference resolution / highlight tools
 python scripts/acceptance.py           # 43 part-geometry checks vs hand calcs
+python scripts/acceptance_modelling_depth.py # 26 Wave-1 feature-depth checks
+python scripts/acceptance_combine_bodies.py  # 26 registered combine_bodies checks (add/subtract/common)
 python scripts/acceptance_asm_drw.py   # 68 assembly + drawing checks
 python scripts/acceptance_asm_drw.py drawing_tools   # run one named group only
 python scripts/acceptance_iso_annotations.py         # 50 ISO annotation checks
@@ -57,6 +61,23 @@ measured volume/position/interference against a hand calculation.
   return `None`/`void` despite building (e.g. `InsertFeatureShell`).
 - **Tool results use the envelope**: `ok(data, evidence=...)` or a raised
   `SwMcpError` subclass (`errors.py`). Mutations must include `evidence`.
+- For a new orthographic drawing, create one master view with
+  `drawing_insert_view`, then create each companion with
+  `drawing_insert_projected_view`, passing the same exact master view name as
+  `parent_view` every time. Use `drawing_insert_standard_views` only when a
+  direct batch of model views is explicitly wanted. Insert projections before
+  adding sheets, then verify view types, positions and source identity with
+  `list_drawing_views`. On SW2026 projected views may omit orientation read-back;
+  confirm the projection convention from the sheet setting, symbol and raster.
+- Drawing view insertion requires an exact open `model_reference` and
+  `configuration`; verify the resolved model identity from `list_drawing_views`.
+  Live acceptance on typelib 34.0 reads `IView.ReferencedConfiguration` back;
+  report it unavailable only when the installed binding's getter fails.
+- Geometry-comparison success requires caller tolerances for volume, exact
+  extrema, and sampled surface deviation. Report sample limits and topology;
+  the surface metric is not an analytic Hausdorff proof.
+- Screenshot results use MCP image content blocks. Keep image base64 out of the
+  text JSON envelope and logs.
 
 ## SOLIDWORKS API workflow
 
@@ -73,14 +94,21 @@ measured volume/position/interference against a hand calculation.
   mass-property density must be read before volume, `GetViews()` returns a nested tuple,
   single-ended `FeatureCut4` cuts need the `Dir` flag (with automatic direction
   retry), `InsertRefPlane` returns an untyped dispatch (use the tree diff),
-  `InsertModelAnnotations3/4` imports nothing on SW2026 SP0 while DimXpert
-  `AutoDimension` works (`drawings.auto_dimension`), `SketchTrim` returns False on
+  `InsertModelAnnotations3/4` behavior depends on document state/options
+  (inventory annotations before and after); DimXpert `AutoDimension` works
+  (`drawings.auto_dimension`), `SketchTrim` returns False on
   success (judge by the sketch fingerprint), `SimpleHole2` locates the hole from the
   face selection's `ISelectData` X/Y/Z (no sketch), `IComponent2.Select2` fails on
   mated components (use `GetSelectByIDString` + `SelectByID2`), `InsertRib`
   builds nothing on SW2026 SP0.0 (the `rib` tool is withheld; see COM-QUIRKS),
-  `CreateUnfoldedViewAt3` creates only one projected view per drawing and dies
-  once a second sheet exists, drawing view sketches cannot be closed through
+  reference extrudes require profile mark 0 + reference mark 1, thin features
+  require the just-closed sketch to remain selected and `Dir=True`, chamfer
+  type 16 is a no-op (use type 1 at 45 degrees for equal distance), cosmetic
+  thread numeric args land as Diameter then BlindDepth despite typelib names,
+  and `InsertDome` needs face mark 1,
+  `CreateUnfoldedViewAt3` projects from the selected view and supports multiple
+  projections on one drawing; it can return nothing once a second sheet exists,
+  so add projections first. Drawing view sketches cannot be closed through
   the API (`exit_sketch` reports `view_sketch: true`), and
   `swCreateSectionViewAtOptions_e` has ExcludeFasteners=64 on this typelib.
   Annotation editing: `IAnnotation.Select3(True, None)` is dead on this build
@@ -102,6 +130,17 @@ measured volume/position/interference against a hand calculation.
   until `drawing_arrange_dimensions` re-spaces them.
   Mates read back as `MateGroup` sub-features wrapped as `IMate2`
   (`assemblies.list_mates`).
+- `HoleWizard5` exists but the exploratory call crashed in `mfc140u.dll` on
+  SW2026 SP0.0; native Hole Wizard creation stays withheld until a safe
+  acceptance path exists. Current compound holes are geometry-only. Drawing
+  dimensions need an explicit feature coverage map when design-critical
+  coverage is audited; edge counts never define feature quantity. The layout
+  screen includes all returned text and exact revision-table bounds, while
+  raster review remains the check for leaders, glyphs, frame geometry, and
+  rendered overflow. House drawing skills use A3 landscape, first angle,
+  millimetres, and revision A as review defaults. ISO 2768-2 is withdrawn and
+  replaced by ISO 22081:2021; avoid the combined ISO 2768-mK note and an
+  unspecified surface finish.
 - An API-created section view needs its cutting line in the view sketch's
   **local** space (the view's centre, no scale factor): `drawing_insert_section_view`
   converts from sheet millimetres and verifies the cut by read-back, so a

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""End-to-end ISO drawing demo following skills/iso-engineering-drawing.
+"""End-to-end ISO drawing demo following skills/dnk-solidworks-iso-engineering-drawing.
 
 Builds a mounting bracket (140 x 80 x 12, 2 x Ø10 holes 90 mm apart, a 50 x 12
 slot), then produces an A3 first-angle drawing with the standard workflow:

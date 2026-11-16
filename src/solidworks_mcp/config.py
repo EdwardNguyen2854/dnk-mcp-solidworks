@@ -18,12 +18,12 @@ TEMPLATE_FILES = {
 
 
 def _default_output_root() -> Path:
-    return Path.home() / "Documents" / "solidworks-mcp-core"
+    return Path.home() / "Documents" / "dnk-mcp-solidworks"
 
 
 def _default_checkpoint_root() -> Path:
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "MCP-Solidworks"
+    return Path(base) / "dnk-mcp-solidworks"
 
 
 @dataclass

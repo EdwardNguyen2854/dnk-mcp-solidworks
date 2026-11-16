@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "solidworks-mcp-core"
-version = "0.4.0"
-description = "Private best-of-class MCP server for SOLIDWORKS (Windows COM)"
+name = "dnk-mcp-solidworks"
+version = "0.5.0"
+description = "dnk's MCP server for SOLIDWORKS: drives a running Windows COM session"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
@@ -21,29 +21,31 @@ dev = ["pytest>=8"]
 toolhive = ["mcp>=1.8,<2", "uvicorn>=0.31.1"]
 
 [project.scripts]
+dnk-mcp-solidworks = "solidworks_mcp.server:main"
 solidworks-mcp-core = "solidworks_mcp.server:main"
+solidworks-mcp = "solidworks_mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/solidworks-mcp-core/skills/cad-house-standard" = [
-  "skills/cad-house-standard/SKILL.md",
+"share/dnk-mcp-solidworks/skills/dnk-solidworks-cad-house-standard" = [
+  "skills/dnk-solidworks-cad-house-standard/SKILL.md",
 ]
-"share/solidworks-mcp-core/skills/cad-remodel" = [
-  "skills/cad-remodel/SKILL.md",
+"share/dnk-mcp-solidworks/skills/dnk-solidworks-cad-remodel" = [
+  "skills/dnk-solidworks-cad-remodel/SKILL.md",
 ]
-"share/solidworks-mcp-core/skills/drawing-acceptance" = [
-  "skills/drawing-acceptance/SKILL.md",
+"share/dnk-mcp-solidworks/skills/dnk-solidworks-drawing-acceptance" = [
+  "skills/dnk-solidworks-drawing-acceptance/SKILL.md",
 ]
-"share/solidworks-mcp-core/skills/image-assisted-modeling" = [
-  "skills/image-assisted-modeling/SKILL.md",
+"share/dnk-mcp-solidworks/skills/dnk-solidworks-image-assisted-modeling" = [
+  "skills/dnk-solidworks-image-assisted-modeling/SKILL.md",
 ]
-"share/solidworks-mcp-core/skills/iso-engineering-drawing" = [
-  "skills/iso-engineering-drawing/SKILL.md",
+"share/dnk-mcp-solidworks/skills/dnk-solidworks-iso-engineering-drawing" = [
+  "skills/dnk-solidworks-iso-engineering-drawing/SKILL.md",
 ]
-"share/solidworks-mcp-core/skills/sheet-layout" = [
-  "skills/sheet-layout/SKILL.md",
+"share/dnk-mcp-solidworks/skills/dnk-solidworks-sheet-layout" = [
+  "skills/dnk-solidworks-sheet-layout/SKILL.md",
 ]
 
 [tool.pytest.ini_options]

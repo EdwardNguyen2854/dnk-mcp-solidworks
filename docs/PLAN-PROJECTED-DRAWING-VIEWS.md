@@ -7,7 +7,7 @@
 
 - The MCP server already provides `drawing_insert_projected_view`, and its description documents using one exact master `parent_view` for each companion.
 - The projected-view tool schema currently makes `parent_view` optional, and the domain function can fall back to the first model view. This weakens the intended explicit-parent contract.
-- The ISO drawing, sheet-layout, and drawing-acceptance skills already prescribe the master-then-projections workflow. Their model-invocation descriptions may not reliably surface it for generic 2D drawing requests.
+- The ISO drawing, dnk-solidworks-sheet-layout, and dnk-solidworks-drawing-acceptance skills already prescribe the master-then-projections workflow. Their model-invocation descriptions may not reliably surface it for generic 2D drawing requests.
 - The `iso_flange_demo.py` and `drawing_smoke.py` examples use `drawing_insert_standard_views`, which inserts independent standard views. These examples may reinforce the behavior the workflow is intended to avoid.
 - `acceptance_asm_drw.py` already contains live checks for two companions projected from the same master, including projected type, parent, placement, source model, and configuration.
 
@@ -25,7 +25,7 @@
    - Keep any genuinely useful direct-batch coverage as an explicit separate test, not as the primary workflow example.
 
 3. **Improve skill discovery and guidance**
-   - Sharpen model-invocation descriptions for `iso-engineering-drawing`, `sheet-layout`, and `drawing-acceptance` to include generic 2D/orthographic drawing and projected-view requests.
+   - Sharpen model-invocation descriptions for `dnk-solidworks-iso-engineering-drawing`, `dnk-solidworks-sheet-layout`, and `dnk-solidworks-drawing-acceptance` to include generic 2D/orthographic drawing and projected-view requests.
    - Put the master → projected companions sequence early in the relevant procedure and retain the requirement to pass the same exact master name every time.
    - Keep first-angle/third-angle placement, source/configuration verification, and the direct-batch exception consistent across skills, `docs/ISO-DRAWING.md`, and `AGENTS.md`.
 

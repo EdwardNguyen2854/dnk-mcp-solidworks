@@ -27,7 +27,7 @@ def _skills_root() -> Path | None:
     candidates.append(
         Path(sysconfig.get_path("data"))
         / "share"
-        / "solidworks-mcp-core"
+        / "dnk-mcp-solidworks"
         / "skills"
     )
     for candidate in candidates:

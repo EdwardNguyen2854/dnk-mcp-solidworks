@@ -21,7 +21,7 @@ from .errors import SwMcpError, fail, translate_com_error
 
 log = logging.getLogger(__name__)
 
-server = Server("solidworks-mcp-core")
+server = Server("dnk-mcp-solidworks")
 
 
 def _import_tools() -> None:
@@ -76,7 +76,7 @@ async def _serve() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="solidworks-mcp-core")
+    parser = argparse.ArgumentParser(prog="dnk-mcp-solidworks")
     parser.add_argument("--tier", choices=VALID_TIERS, help="tool tier override")
     parser.add_argument(
         "--transport",
@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         log.info(
-            "solidworks-mcp-core %s starting (tier=%s)", __version__, config.tool_tier
+            "dnk-mcp-solidworks %s starting (tier=%s)", __version__, config.tool_tier
         )
         if args.transport == "streamable-http":
             from .http_transport import serve_streamable_http

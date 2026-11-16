@@ -73,7 +73,7 @@ def collect() -> dict:
             templates[kind] = None
 
     return {
-        "server": {"name": "solidworks-mcp-core", "version": __version__},
+        "server": {"name": "dnk-mcp-solidworks", "version": __version__},
         "tool_tier": config.tool_tier,
         "binding": binding_info,
         "solidworks": run(probe_solidworks),

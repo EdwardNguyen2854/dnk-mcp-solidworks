@@ -80,7 +80,7 @@ policies, material conventions, and release procedures still need approval.
     structure (`page_count_consistent` flags a declared/actual page mismatch).
 
 The reusable orchestration procedure is in
-`skills/iso-engineering-drawing/SKILL.md`.
+`skills/dnk-solidworks-iso-engineering-drawing/SKILL.md`.
 
 ## Current scope
 

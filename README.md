@@ -1,8 +1,8 @@
-# solidworks-mcp-core
+# dnk-mcp-solidworks
 
-A private, best-of-class MCP server that drives a **running SOLIDWORKS session**
-through its COM API — built for an AI agent to design, measure and verify real
-parametric parts, assemblies and drawings.
+**dnk**'s private, best-of-class MCP server that drives a **running SOLIDWORKS
+session** through its COM API — built for an AI agent to design, measure and
+verify real parametric parts, assemblies and drawings.
 
 It does not launch SOLIDWORKS, does not register an add-in, does not execute
 arbitrary code and does not touch the network. It attaches to the session you
@@ -81,8 +81,8 @@ geometry — the same API returns null, False or stale values in equal measure
 ## Install
 
 ```powershell
-git clone <this repo> mcp-solidworks-core
-cd mcp-solidworks-core
+git clone <this repo> dnk-mcp-solidworks
+cd dnk-mcp-solidworks
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
@@ -96,7 +96,7 @@ Start SOLIDWORKS first, then point your MCP client at the entry point.
   "mcp": {
     "solidworks": {
       "type": "local",
-      "command": ["D:/path/to/mcp-solidworks-core/.venv/Scripts/python.exe", "-m", "solidworks_mcp"],
+      "command": ["D:/path/to/dnk-mcp-solidworks/.venv/Scripts/python.exe", "-m", "solidworks_mcp"],
       "environment": { "SW_MCP_TOOL_TIER": "extended" }
     }
   }
@@ -115,7 +115,7 @@ claude mcp add solidworks -- D:\path\to\.venv\Scripts\python.exe -m solidworks_m
 {
   "mcpServers": {
     "solidworks": {
-      "command": "D:\\path\\to\\mcp-solidworks-core\\.venv\\Scripts\\python.exe",
+      "command": "D:\\path\\to\\dnk-mcp-solidworks\\.venv\\Scripts\\python.exe",
       "args": ["-m", "solidworks_mcp"],
       "env": { "SW_MCP_TOOL_TIER": "extended" }
     }
@@ -178,14 +178,14 @@ loaded.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SW_MCP_TOOL_TIER` | `extended` | `core`, `extended`, `advanced`, `debug`, `all` |
-| `SW_MCP_OUTPUT_ROOT` | `~/Documents/solidworks-mcp-core` | Every file the server writes stays under here |
+| `SW_MCP_OUTPUT_ROOT` | `~/Documents/dnk-mcp-solidworks` | Every file the server writes stays under here |
 | `SW_MCP_ALLOWED_ROOTS` | unset | Extra writable roots, `;`-separated |
 | `SW_MCP_TEMPLATE_DIR` | auto-discovered | Folder with `.prtdot`/`.asmdot`/`.drwdot` |
 | `SW_MCP_SLDWORKS_EXE` | unset | `SLDWORKS.exe` path (typelib fallback) |
 | `SW_MCP_AUTO_CHECKPOINT` | `1` | Checkpoint before risky mutations |
 | `SW_MCP_CHECKPOINT_DEBOUNCE_SEC` | `45` | Minimum seconds between checkpoints |
 | `SW_MCP_OPERATION_TIMEOUT_SEC` | `180` | Per-call COM timeout |
-| `SW_MCP_LOG_LEVEL` | `INFO` | Log level (`%LOCALAPPDATA%\MCP-Solidworks\server.log`) |
+| `SW_MCP_LOG_LEVEL` | `INFO` | Log level (`%LOCALAPPDATA%\dnk-mcp-solidworks\server.log`) |
 | `SW_TYPELIB_MAJOR` / `SW_TYPELIB_MINOR` | auto | Force a typelib version |
 
 Machine-specific overrides can also live in a gitignored
@@ -209,9 +209,10 @@ Machine-specific overrides can also live in a gitignored
 The tool catalog is the capability layer; `skills/<name>/SKILL.md` carries the
 procedure layer (order of operations, defaults, stop conditions) that turns
 the tools into a repeatable workflow. The bundled pack is
-`iso-engineering-drawing`, `cad-house-standard`, `drawing-acceptance`,
-`sheet-layout`, `cad-remodel` and `image-assisted-modeling`. Install them into
-the directory your agent client scans:
+`dnk-solidworks-iso-engineering-drawing`, `dnk-solidworks-cad-house-standard`,
+`dnk-solidworks-drawing-acceptance`, `dnk-solidworks-sheet-layout`,
+`dnk-solidworks-cad-remodel` and `dnk-solidworks-image-assisted-modeling`.
+Install them into the directory your agent client scans:
 
 ```powershell
 python -m solidworks_mcp --install-skill "D:\path\to\agent\skills"
@@ -269,7 +270,7 @@ looked fine".
 - `docs/PRIOR-ART.md` — the public reference servers, what we learned from
   each, and what is still unmined
 - `docs/ISO-DRAWING.md` — ISO metric drawing profile, workflow and validation
-- `skills/iso-engineering-drawing/SKILL.md` — reusable ISO drawing procedure
+- `skills/dnk-solidworks-iso-engineering-drawing/SKILL.md` — reusable ISO drawing procedure
 - `docs/adr/0001-binding-strategy.md` — why early binding and interface wrapping
 - `scripts/probe_api.py` — inspect the installed typelib (`--method`,
   `--enum`, `--search`, `--brief`)

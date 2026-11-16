@@ -1,11 +1,11 @@
 ---
-name: sheet-layout
+name: dnk-solidworks-sheet-layout
 description: Place SOLIDWORKS drawing views and reserve full-sheet keep-outs using measured outlines and annotation extents.
 ---
 
 # Sheet layout
 
-Use sheet coordinates in millimetres from the lower-left corner. Read cad-house-standard for the current review profile. Every inserted view must name its exact open model_reference and configuration.
+Use sheet coordinates in millimetres from the lower-left corner. Read the `dnk-solidworks-cad-house-standard` skill for the current review profile. Every inserted view must name its exact open model_reference and configuration.
 
 ## Measured layout
 

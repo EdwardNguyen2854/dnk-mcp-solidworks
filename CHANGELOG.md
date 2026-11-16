@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the distribution and product identity to **dnk-mcp-solidworks**
+  (`dnk-mcp-solidworks` console script, `solidworks-mcp-core` and
+  `solidworks-mcp` kept as aliases). The Python import package remains
+  `solidworks_mcp`, so existing scripts and MCP client commands that use
+  `python -m solidworks_mcp` keep working.
+- Renamed the bundled workflow skills to the `dnk-solidworks-*` namespace
+  (`dnk-solidworks-iso-engineering-drawing`,
+  `dnk-solidworks-cad-house-standard`, `dnk-solidworks-drawing-acceptance`,
+  `dnk-solidworks-sheet-layout`, `dnk-solidworks-cad-remodel`,
+  `dnk-solidworks-image-assisted-modeling`). Reinstall the pack after upgrading;
+  skill IDs changed, so agent-side references must be updated.
+- Default write sandbox and log/checkpoint folders now use `dnk-mcp-solidworks`.
+  Existing checkpoints stay in the old `%LOCALAPPDATA%\MCP-Solidworks` folder
+  unless moved manually.
+
 ### Added
 
 - Selection references for engineer-in-the-loop workflows: `get_selection`
@@ -31,10 +48,10 @@ All notable changes to this project are documented here. The format follows
   readback, and roll back captured values on failure. Full-sheet layout audit
   now includes title-block/frame notes and exact revision-table bounds where
   the table API exposes them.
-- A `cad-remodel` skill and updated review-drawing skills define separate
+- A `dnk-solidworks-cad-remodel` skill and updated review-drawing skills define separate
   source preservation, geometry comparison, full-sheet raster checks, and
   review-versus-release gates.
-- An `image-assisted-modeling` skill guides image-referenced part creation with
+- An `dnk-solidworks-image-assisted-modeling` skill guides image-referenced part creation with
   explicit known/estimated/unknown geometry, clarification gates, editable
   features, measured checks, and screenshot review. It does not claim automatic
   image-to-CAD conversion; image interpretation stays in the agent client.
@@ -105,10 +122,10 @@ All notable changes to this project are documented here. The format follows
   properties, rebuild state), `drawing_preflight` (frame/projection/view
   checks) and `validate_iso_drawing` (release contract with
   `readable_dimensions` and title-block link checks).
-- Bundled workflow skills: `skills/iso-engineering-drawing/SKILL.md`,
-  `skills/cad-house-standard/SKILL.md`,
-  `skills/drawing-acceptance/SKILL.md`, `skills/sheet-layout/SKILL.md` and
-  `skills/cad-remodel/SKILL.md`,
+- Bundled workflow skills: `skills/dnk-solidworks-iso-engineering-drawing/SKILL.md`,
+  `skills/dnk-solidworks-cad-house-standard/SKILL.md`,
+  `skills/dnk-solidworks-drawing-acceptance/SKILL.md`, `skills/dnk-solidworks-sheet-layout/SKILL.md` and
+  `skills/dnk-solidworks-cad-remodel/SKILL.md`,
   plus `python -m solidworks_mcp --install-skill <dir>` to copy them into an
   agent's skills directory.
 - Optional HTTP transport alongside stdio.

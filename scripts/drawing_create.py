@@ -14,7 +14,7 @@ from mcp.client.stdio import stdio_client
 ROOT = Path(__file__).resolve().parents[1]
 OUT = Path(os.environ.get(
     "SW_MCP_OUTPUT_ROOT",
-    str(Path.home() / "Documents" / "solidworks-mcp-core"),
+    str(Path.home() / "Documents" / "dnk-mcp-solidworks"),
 ))
 
 

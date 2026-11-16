@@ -1,5 +1,5 @@
 ---
-name: drawing-acceptance
+name: dnk-solidworks-drawing-acceptance
 description: Ordered review and release gates for a SOLIDWORKS drawing, from source intake through verified native reopen and full-sheet raster review.
 ---
 

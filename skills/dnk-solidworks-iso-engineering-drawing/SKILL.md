@@ -1,5 +1,5 @@
 ---
-name: iso-engineering-drawing
+name: dnk-solidworks-iso-engineering-drawing
 description: Create and review an ISO metric part drawing in SOLIDWORKS with explicit model references, feature coverage, full-sheet checks, and release gates.
 ---
 
@@ -9,7 +9,7 @@ Use this workflow for an ISO metric drawing. It coordinates the typed SOLIDWORKS
 
 ## Intake
 
-Record the exact source model path, document type, configuration, drawing number, title, requested revision, and output paths. Treat unknown material, functional fits, datum scheme, process/finish requirements, checker, and approver as unconfirmed. Read cad-house-standard for the agreed profile.
+Record the exact source model path, document type, configuration, drawing number, title, requested revision, and output paths. Treat unknown material, functional fits, datum scheme, process/finish requirements, checker, and approver as unconfirmed. Read the `dnk-solidworks-cad-house-standard` skill for the agreed profile.
 
 ## Workflow
 

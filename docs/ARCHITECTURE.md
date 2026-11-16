@@ -87,6 +87,6 @@ returned as MCP image content alongside the JSON envelope.
 ## Transactions
 
 `tx/checkpoint.py` snapshots the active document (file copy, or save-a-copy
-for unsaved documents) into `%LOCALAPPDATA%\MCP-Solidworks\checkpoints`,
+for unsaved documents) into `%LOCALAPPDATA%\dnk-mcp-solidworks\checkpoints`,
 debounced by `SW_MCP_CHECKPOINT_DEBOUNCE_SEC`. `rollback_to_checkpoint`
 closes without saving and reopens a snapshot.

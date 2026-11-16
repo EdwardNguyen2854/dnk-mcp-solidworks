@@ -1,5 +1,5 @@
 ---
-name: cad-house-standard
+name: dnk-solidworks-cad-house-standard
 description: Editable review profile for ISO drawings, including sheet, projection, units, tolerance policy, title fields, revisions, and release status.
 ---
 
@@ -29,7 +29,7 @@ Apply this profile to a review drawing. It sets presentation defaults while func
 
 1. Apply the profile without asking again when the user has already confirmed it in the session. State the values used in the final report.
 2. Record unknown material, fit, datums, finish process, checker, and approver as unconfirmed. Do not infer them from geometry or stock properties.
-3. Keep iso-engineering-drawing as the procedure and this profile as the house values.
+3. Keep `dnk-solidworks-iso-engineering-drawing` as the procedure and this profile as the house values.
 4. Use exact open-model path and configuration for every inserted view. Report the resolved reference and view-level readback; disclose when configuration readback is unavailable.
 5. Keep model dimensions tied to named features and their design intent. Do not translate edge counts into feature quantities. Use drawing_audit_feature_coverage with an explicit feature-to-dimension mapping and flag uncovered critical features.
 6. Review the whole sheet: frame, title block, revision table, dimensions, notes, leaders, view outlines, and keep-out zones. Estimated annotation boxes are screening evidence; inspect a raster rendering of the full sheet.

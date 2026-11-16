@@ -9,24 +9,24 @@ def test_install_skills_copies_the_iso_workflow(tmp_path):
 
     names = {path.parent.name for path in installed}
     assert {
-        "iso-engineering-drawing",
-        "cad-house-standard",
-        "drawing-acceptance",
-        "sheet-layout",
-        "cad-remodel",
-        "image-assisted-modeling",
+        "dnk-solidworks-iso-engineering-drawing",
+        "dnk-solidworks-cad-house-standard",
+        "dnk-solidworks-drawing-acceptance",
+        "dnk-solidworks-sheet-layout",
+        "dnk-solidworks-cad-remodel",
+        "dnk-solidworks-image-assisted-modeling",
     } <= names
-    manifest = tmp_path / "iso-engineering-drawing" / "SKILL.md"
+    manifest = tmp_path / "dnk-solidworks-iso-engineering-drawing" / "SKILL.md"
     assert manifest.is_file()
     assert manifest.read_text(encoding="utf-8").startswith("---")
-    image_manifest = tmp_path / "image-assisted-modeling" / "SKILL.md"
+    image_manifest = tmp_path / "dnk-solidworks-image-assisted-modeling" / "SKILL.md"
     assert image_manifest.is_file()
     assert image_manifest.read_text(encoding="utf-8").startswith("---")
 
 
 def test_install_skills_refreshes_existing_files(tmp_path):
     skills.install_skills(tmp_path)
-    manifest = tmp_path / "iso-engineering-drawing" / "SKILL.md"
+    manifest = tmp_path / "dnk-solidworks-iso-engineering-drawing" / "SKILL.md"
     manifest.write_text("stale", encoding="utf-8")
 
     skills.install_skills(tmp_path)
@@ -46,14 +46,14 @@ def test_install_skills_finds_wheel_data_files(monkeypatch, tmp_path):
     packaged_skill = (
         install_prefix
         / "share"
-        / "solidworks-mcp-core"
+        / "dnk-mcp-solidworks"
         / "skills"
-        / "image-assisted-modeling"
+        / "dnk-solidworks-image-assisted-modeling"
         / "SKILL.md"
     )
     packaged_skill.parent.mkdir(parents=True)
     packaged_skill.write_text(
-        "---\nname: image-assisted-modeling\n---\n", encoding="utf-8"
+        "---\nname: dnk-solidworks-image-assisted-modeling\n---\n", encoding="utf-8"
     )
 
     monkeypatch.setattr(skills, "__file__", str(fake_module))
@@ -65,7 +65,7 @@ def test_install_skills_finds_wheel_data_files(monkeypatch, tmp_path):
     installed = skills.install_skills(tmp_path / "agent-skills")
 
     assert installed == [
-        tmp_path / "agent-skills" / "image-assisted-modeling" / "SKILL.md"
+        tmp_path / "agent-skills" / "dnk-solidworks-image-assisted-modeling" / "SKILL.md"
     ]
 
 
@@ -78,7 +78,7 @@ def test_every_source_skill_is_declared_as_wheel_data():
     packaged = {
         key.rsplit("/", maxsplit=1)[-1]
         for key, files in data_files.items()
-        if key.startswith("share/solidworks-mcp-core/skills/")
+        if key.startswith("share/dnk-mcp-solidworks/skills/")
         and files == [f"skills/{key.rsplit('/', maxsplit=1)[-1]}/SKILL.md"]
     }
     source = {

@@ -1,6 +1,6 @@
 ---
-name: image-assisted-modeling
-description: Use when a user provides image(s) or a drawing of a mechanical object and wants an editable SOLIDWORKS part. If an existing CAD model is the source, use cad-remodel.
+name: dnk-solidworks-image-assisted-modeling
+description: Use when a user provides image(s) or a drawing of a mechanical object and wants an editable SOLIDWORKS part. If an existing CAD model is the source, use dnk-solidworks-cad-remodel.
 ---
 
 # Image-assisted modeling
@@ -9,7 +9,7 @@ Use drawing images as evidence for a native, editable SOLIDWORKS part. This is a
 
 ## Workflow
 
-1. **Set the target.** Confirm whether the user wants a concept, a dimensionally constrained review model, or another accuracy level. If an existing CAD model is the source, use `cad-remodel` and preserve it. Ask before creating a drawing; use `iso-engineering-drawing` when requested.
+1. **Set the target.** Confirm whether the user wants a concept, a dimensionally constrained review model, or another accuracy level. If an existing CAD model is the source, use `dnk-solidworks-cad-remodel` and preserve it. Ask before creating a drawing; use `dnk-solidworks-iso-engineering-drawing` when requested.
 2. **Make the image visible.** Use an attached image when available. For a local path, call `view_reference_image`; it returns a PNG/JPEG as MCP image content with pixel metadata. If neither path works, ask for an attachment or an accessible reference. The tool does not OCR, trace geometry, infer physical scale, or reconstruct a model.
 3. **Read the drawing before modeling.** Identify each front/top/side, isometric, section, and detail view. Use the marked projection convention where present; don't infer first- versus third-angle projection from layout alone. Record units, scale notes, section cuts, hidden geometry, centerlines, and explicit dimensions. Prefer orthographic and section views for size and location; use isometric views for shape context. Printed dimensions outrank pixel proportions.
 4. **Create a dimension/evidence ledger before choosing geometry.** For each consequential requirement, record its value and unit, source view/callout, evidence class, planned feature or model dimension, and verification method. Use these evidence classes:

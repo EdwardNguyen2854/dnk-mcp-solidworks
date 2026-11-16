@@ -1,5 +1,5 @@
 ---
-name: cad-remodel
+name: dnk-solidworks-cad-remodel
 description: Re-model a SOLIDWORKS part while preserving the source, comparing geometry and editable design data, and holding release when functional intent is unknown.
 ---
 

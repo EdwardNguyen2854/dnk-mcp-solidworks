@@ -7,6 +7,8 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+.agent/
+.agent-teams/
 config.local.json
 artifacts/
 gen_py/

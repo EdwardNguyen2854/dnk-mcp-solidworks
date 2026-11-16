@@ -27,6 +27,8 @@ python scripts/acceptance_selection.py       # selection read / reference resolu
 python scripts/acceptance.py           # 43 part-geometry checks vs hand calcs
 python scripts/acceptance_modelling_depth.py # 26 Wave-1 feature-depth checks
 python scripts/acceptance_combine_bodies.py  # 26 registered combine_bodies checks (add/subtract/common)
+python scripts/acceptance_datum_selection.py # selection references, identity and owned highlights (disposable part)
+python scripts/acceptance_datum_capture.py   # capture_screenshot current-view acceptance (disposable part)
 python scripts/acceptance_asm_drw.py   # 68 assembly + drawing checks
 python scripts/acceptance_asm_drw.py drawing_tools   # run one named group only
 python scripts/acceptance_iso_annotations.py         # 50 ISO annotation checks

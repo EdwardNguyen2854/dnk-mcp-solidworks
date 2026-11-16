@@ -200,6 +200,14 @@ def _edge_vertex_points(edge) -> tuple | None:
     return None
 
 
+def _edge_has_no_vertices(edge) -> bool:
+    """True when the edge exposes neither endpoint vertex (a full closed curve)."""
+    try:
+        return edge.GetStartVertex() is None and edge.GetEndVertex() is None
+    except Exception:
+        return False
+
+
 def _edge_span_points(edge) -> tuple | None:
     """Both endpoints from the curve's trimmed parameter range.
 
@@ -254,12 +262,15 @@ def edge_details(edge) -> dict:
         details["length_mm"] = round(units.m_to_mm(length), 6)
     span = _edge_vertex_points(edge)
     source = "trimmed_vertices"
+    vertex_less = span is None and _edge_has_no_vertices(edge)
     if span is None:
         span = _edge_span_points(edge)
         source = "trim_params"
     if span is None:
-        details["closed"] = None
-        details["endpoint_source"] = "unavailable"
+        # A vertex-less edge (a full circle around a hole) is closed even when
+        # its curve parameters cannot be read; report that instead of unknown.
+        details["closed"] = True if vertex_less else None
+        details["endpoint_source"] = "no_vertices" if vertex_less else "unavailable"
         return details
     start, end = span
     details["start_mm"] = [round(units.m_to_mm(value), 6) for value in start]
